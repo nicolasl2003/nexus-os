@@ -225,8 +225,9 @@ lancé la commande reste la console série (Ctrl+A puis X pour quitter QEMU).
 - Le noyau démarre avec `quiet loglevel=5` : sans `loglevel=5`, les noyaux
   récents n'affichent plus le logo en mode `quiet`.
 - `NO_DISK=1 make run-gui` démarre en mode live, sans brancher le disque.
-- **Clavier** : sur le bureau graphique, la disposition est AZERTY (avec les
-  touches mortes : `^` puis `e` = `ê`). Les consoles texte restent en QWERTY.
+- **Clavier** : AZERTY par défaut, sur le bureau (touches mortes : `^` puis
+  `e` = `ê`) comme dans les consoles texte. Autre disposition : Paramètres →
+  Clavier, ou `su -c "nexus-keymap set us"` (liste : `nexus-keymap list`).
 
 ## Bureau graphique (Wayland)
 
@@ -547,3 +548,52 @@ de Nexus. Les scripts d'installation d'Alpine ne sont pas exécutés (liste dans
 et ses dépendances ≈ 300 Mo.
 
 Noyau : `CONFIG_USER_NS=y` (bac à sable de Firefox).
+
+## Nexus 0.9 : clavier, notifications, fichiers, Wi-Fi, mises à jour
+
+Version unique **0.9.0** partout (écran de connexion, `/etc/os-release`,
+Paramètres → À propos, nom de l'ISO, paquet `nexus-desktop`) : un seul
+réglage, `NEXUS_VERSION` dans `config/versions.env`.
+
+**Clavier** — `nexus-keymap` (`rootfs/usr/sbin/nexus-keymap`) : 13
+dispositions (AZERTY, BÉPO, Mac, belge, suisse, canadien, US, UK, allemand,
+espagnol, italien, portugais). Choisie à la 1re étape de l'assistant de
+premier démarrage, enregistrée dans `/etc/keyboard` (+ `/data/keyboard`),
+appliquée aux consoles au démarrage (tables `rootfs/usr/share/keymaps/*.bmap.gz`
+chargées par `loadkmap`), à l'écran de connexion et au bureau.
+**Paramètres → Clavier** : clic sur une disposition = changement immédiat
+(labwc relit `~/.config/labwc/environment` sur SIGHUP) et des consoles (via
+`nexus-power keymap`, autorisé au groupe `video`), avec une zone pour essayer.
+
+**Notifications** — bulles en bas à droite (`nexus-notifyd`, lancé à
+l'ouverture de session ; `desktop/shell/notify.c`). Clic : action (ex. ouvrir
+le Magasin), croix : fermer ; la bulle survolée reste affichée.
+```sh
+nexus-notify "Titre" "Texte"                       # depuis un script
+nexus-notify -i store -a nexus-store "Titre" "Texte"   # icône + action au clic
+```
+Envoyées automatiquement : fin d'installation / mise à jour dans le Magasin,
+Wi-Fi connecté / déconnecté, batterie faible (20 %), très faible (8 %),
+chargée, mises à jour disponibles. Les notifications du système (écrites par
+root dans `/run/nexus/notify/`) ne s'affichent qu'une fois par session.
+
+**Mises à jour automatiques** — service `updates` (paquet `nexus-desktop`) :
+30 s après le démarrage puis toutes les 6 h, `npk update` puis `npk outdated`
+(nouvelle commande : paquets qui ont une mise à jour). S'il y en a :
+bulle « 3 mises à jour disponibles », un clic ouvre le Magasin sur l'onglet
+*Mises à jour* (`nexus-store --updates`). Rien n'est installé sans toi.
+Désactiver : `su -c "service updates disable"`.
+
+**Fichiers** — miniatures des images (PNG et JPEG), visionneuse et fonds
+d'écran JPEG (`nx_load_image`, libjpeg), **glisser-déposer** : faire glisser
+des éléments sur un dossier ou un emplacement de la barre latérale les
+déplace (Ctrl : copie) ; sur la Corbeille, les y met.
+
+**Wi-Fi** — le paquet `wifi` (pilotes, firmwares, wpa_supplicant, ≈ 9 Mo)
+est maintenant installé avec le bureau : icône réseau de la barre → choisir
+un réseau → mot de passe → connecté, sans rien installer à la main.
+
+Testé dans une VM vierge : assistant (clavier, bureau), AZERTY en console et à
+la connexion, passage US/AZERTY en direct, bulles (test, mise à jour → clic →
+Magasin), miniatures, déplacement vers Documents et Corbeille, visionneuse
+JPEG, connexion Wi-Fi simulée (`nexus-wifi-test`) avec notification.

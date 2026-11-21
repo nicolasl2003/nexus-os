@@ -361,6 +361,16 @@ static void last_line(char *dst, size_t n)
     snprintf(dst, n, "%s", l);
 }
 
+/* Bulle de notification (nexus-notifyd) : utile si le Magasin est caché */
+static void notify(const char *title, const char *body)
+{
+    char qt[300], qb[600], cmd[1000];
+    nx_shell_quote(qt, sizeof qt, title);
+    nx_shell_quote(qb, sizeof qb, body);
+    snprintf(cmd, sizeof cmd, "nexus-notify -i store -a nexus-store %s %s", qt, qb);
+    nx_spawn(cmd);
+}
+
 static void finish_op(int st)
 {
     close(child_out);
@@ -386,8 +396,16 @@ static void finish_op(int st)
         else if (!strcmp(op_args[0], "update")) set_status("Liste des applications à jour", line, false);
         else set_status("Mises à jour installées", line, false);
         nx_notify_reload();   /* la barre des tâches revoit ses applications épinglées */
+        char body[200];
+        if (!strcmp(op_args[0], "install") || !strcmp(op_args[0], "alpine-install")) {
+            snprintf(body, sizeof body, "« %s » est installé.", op_nargs > 1 ? op_args[1] : "");
+            notify("Installation terminée", body);
+        } else if (!strcmp(op_args[0], "upgrade") || !strcmp(op_args[0], "alpine-upgrade")) {
+            notify("Mises à jour installées", "Ton système est à jour.");
+        }
     } else {
         set_status("L'opération a échoué", line, true);
+        notify("L'opération a échoué", line);
     }
     load_pkgs();
     load_alpine();
@@ -814,7 +832,10 @@ int store_main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
     load_pkgs();
     load_alpine();
-    for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--alpine")) tab = TAB_ALPINE;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--alpine")) tab = TAB_ALPINE;
+        if (!strcmp(argv[i], "--updates")) tab = TAB_UPDATES;
+    }
     if (!nx_init()) return 1;
     /* nx_init ignore SIGCHLD (pas de zombies) : ici on veut le code de
      * retour de nexus-pkg (mot de passe refusé, échec...) */

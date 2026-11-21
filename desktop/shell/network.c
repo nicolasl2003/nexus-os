@@ -164,6 +164,17 @@ static void parse_status(void)
     if (ifname[0]) iface_ip(ifname, cur_ip, sizeof cur_ip);
 }
 
+/* Wi-Fi connecté ? (nom du réseau dans ssid) — pour les notifications */
+bool nx_wifi_connected(char *ssid, size_t n)
+{
+    char w[32];
+    if (!wifi_iface(w, sizeof w)) { wpa_close(); return false; }
+    parse_status();
+    if (strcmp(cur_state, "COMPLETED") || !cur_ssid[0]) return false;
+    snprintf(ssid, n, "%s", cur_ssid);
+    return true;
+}
+
 static int cmp_net(const void *a, const void *b) { return ((const struct net *)b)->signal - ((const struct net *)a)->signal; }
 
 static void parse_scan(void)

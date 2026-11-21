@@ -1,0 +1,22 @@
+#!/bin/sh
+# Service : updates — vérifie les mises à jour au démarrage puis toutes les 6 h
+# et prévient le bureau par une notification. Désactiver : service updates disable
+PIDFILE=/run/nexus-updates.pid
+running() { [ -f "$PIDFILE" ] && [ -d "/proc/$(cat "$PIDFILE")" ]; }
+
+case "$1" in
+    start)
+        running && { echo "updates : déjà actif"; exit 0; }
+        start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/local/libexec/nexus-update-check &&
+            echo "updates : vérification des mises à jour activée"
+        ;;
+    stop)
+        running && start-stop-daemon -K -p "$PIDFILE" >/dev/null && echo "updates : arrêté"
+        rm -f "$PIDFILE"
+        ;;
+    status)
+        if running; then echo "updates : actif (pid $(cat "$PIDFILE"))"; exit 0
+        else echo "updates : arrêté"; exit 1; fi
+        ;;
+    *) echo "Usage : $0 start|stop|status"; exit 1 ;;
+esac

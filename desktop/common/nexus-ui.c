@@ -3,6 +3,10 @@
 #include "nexus-ui.h"
 
 #include <dirent.h>
+#include <setjmp.h>
+#include <stdint.h>
+#include <strings.h>
+#include <jpeglib.h>
 #include <errno.h>
 #include <math.h>
 #include <poll.h>
@@ -500,6 +504,16 @@ void nx_icon(cairo_t *cr, const char *name, double x, double y, double s, nx_col
         nx_rounded_rect(cr, 0.12, 0.18, 0.76, 0.46, 0.04); nx_set(cr, accent); cairo_fill(cr);
         cairo_rectangle(cr, 0.42, 0.7, 0.16, 0.12); nx_set(cr, nx_rgb("#3a4050")); cairo_fill(cr);
         nx_rounded_rect(cr, 0.28, 0.82, 0.44, 0.07, 0.03); cairo_fill(cr);
+    } else if (!strcmp(name, "keyboard")) {
+        nx_rounded_rect(cr, 0.04, 0.22, 0.92, 0.56, 0.08); nx_set(cr, nx_rgb("#3a4050")); cairo_fill(cr);
+        nx_set(cr, nx_rgb("#ffffff"));
+        for (int r = 0; r < 2; r++)
+            for (int c = 0; c < 6; c++) {
+                cairo_rectangle(cr, 0.12 + c * 0.13, 0.30 + r * 0.14, 0.09, 0.09);
+                cairo_fill(cr);
+            }
+        nx_set(cr, accent);
+        nx_rounded_rect(cr, 0.25, 0.60, 0.50, 0.09, 0.03); cairo_fill(cr);
     } else {
         /* Icône générique : initiale dans un carré de couleur d'accent */
         nx_rounded_rect(cr, 0.06, 0.06, 0.88, 0.88, 0.2);
@@ -990,12 +1004,8 @@ static cairo_surface_t *load_png(const char *path)
 {
     if (img && !strcmp(path, img_path)) return img;
     if (img) cairo_surface_destroy(img);
-    img = cairo_image_surface_create_from_png(path);
+    img = nx_load_image(path, 0);   /* PNG ou JPEG */
     snprintf(img_path, sizeof img_path, "%s", path);
-    if (cairo_surface_status(img) != CAIRO_STATUS_SUCCESS) {
-        cairo_surface_destroy(img);
-        img = NULL;
-    }
     return img;
 }
 
@@ -1687,4 +1697,69 @@ bool nx_toggle_instance(const char *name)
 void nx_instance_done(void)
 {
     if (instance_pidfile[0]) unlink(instance_pidfile);
+}
+
+/* ---- Chargement d'images (PNG par cairo, JPEG par libjpeg) ---- */
+
+struct nx_jpeg_err { struct jpeg_error_mgr pub; jmp_buf jb; };
+static void nx_jpeg_fail(j_common_ptr c) { longjmp(((struct nx_jpeg_err *)c->err)->jb, 1); }
+
+/* min_dim > 0 : le JPEG est décodé directement en plus petit (1/2, 1/4, 1/8)
+ * tant que ses deux côtés restent >= min_dim : miniatures bien plus rapides */
+cairo_surface_t *nx_load_image(const char *path, int min_dim)
+{
+    const char *dot = strrchr(path, '.');
+    if (!dot || strcasecmp(dot, ".png") == 0) {
+        cairo_surface_t *s = cairo_image_surface_create_from_png(path);
+        if (cairo_surface_status(s) == CAIRO_STATUS_SUCCESS) return s;
+        cairo_surface_destroy(s);
+        return NULL;
+    }
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    struct jpeg_decompress_struct ci;
+    struct nx_jpeg_err je;
+    cairo_surface_t *volatile s = NULL;
+    unsigned char *volatile row = NULL;
+    ci.err = jpeg_std_error(&je.pub);
+    je.pub.error_exit = nx_jpeg_fail;
+    if (setjmp(je.jb)) {
+        jpeg_destroy_decompress(&ci);
+        fclose(f);
+        free(row);
+        if (s) cairo_surface_destroy(s);
+        return NULL;
+    }
+    jpeg_create_decompress(&ci);
+    jpeg_stdio_src(&ci, f);
+    jpeg_read_header(&ci, TRUE);
+    ci.out_color_space = JCS_RGB;
+    if (min_dim > 0) {
+        unsigned d = 1;
+        while (d < 8 && ci.image_width / (d * 2) >= (unsigned)min_dim && ci.image_height / (d * 2) >= (unsigned)min_dim)
+            d *= 2;
+        ci.scale_num = 1;
+        ci.scale_denom = d;
+    }
+    jpeg_start_decompress(&ci);
+    int w = ci.output_width, h = ci.output_height;
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384 || ci.output_components != 3) longjmp(je.jb, 1);
+    s = cairo_image_surface_create(CAIRO_FORMAT_RGB24, w, h);
+    row = malloc((size_t)w * 3);
+    unsigned char *data = cairo_image_surface_get_data(s);
+    int stride = cairo_image_surface_get_stride(s);
+    while (ci.output_scanline < ci.output_height) {
+        JSAMPROW rp = row;
+        int y = ci.output_scanline;
+        jpeg_read_scanlines(&ci, &rp, 1);
+        uint32_t *dst = (uint32_t *)(data + (size_t)y * stride);
+        for (int x = 0; x < w; x++)
+            dst[x] = 0xff000000u | (uint32_t)row[3 * x] << 16 | (uint32_t)row[3 * x + 1] << 8 | row[3 * x + 2];
+    }
+    cairo_surface_mark_dirty(s);
+    jpeg_finish_decompress(&ci);
+    jpeg_destroy_decompress(&ci);
+    free(row);
+    fclose(f);
+    return s;
 }

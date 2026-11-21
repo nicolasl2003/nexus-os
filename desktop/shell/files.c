@@ -12,8 +12,10 @@
  *  │ 12 éléments                          Espace libre : 3,2 Go │
  *  └───────────────────────────────────────────────────────────┘
  *
- * Double-clic : ouvrir (dossier, texte dans l'éditeur, image PNG dans la
- * visionneuse). Clic droit : menu. Supprimer = mettre à la corbeille
+ * Double-clic : ouvrir (dossier, texte dans l'éditeur, image PNG/JPEG dans la
+ * visionneuse). Miniatures des images. Glisser-déposer des éléments sur un
+ * dossier ou un emplacement de la barre latérale : déplacer (Ctrl : copier ;
+ * sur la Corbeille : mettre à la corbeille). Clic droit : menu. Supprimer = mettre à la corbeille
  * (~/.local/share/Trash, format freedesktop simplifié), donc rattrapable.
  * Raccourcis : Ctrl+C/X/V/A, Suppr, F2, F5, Retour arrière, Ctrl+H.
  *
@@ -52,6 +54,8 @@ struct entry {
     char name[256];
     bool dir, exec;
     off_t size;
+    cairo_surface_t *thumb;   /* miniature (images), créée à l'affichage */
+    bool thumb_tried;
 };
 
 static struct entry *ents;
@@ -98,6 +102,33 @@ static const char *ext_of(const char *name)
 }
 
 static bool is_png(const char *name) { return !strcasecmp(ext_of(name), "png"); }
+static bool is_jpeg(const char *name)
+{
+    return !strcasecmp(ext_of(name), "jpg") || !strcasecmp(ext_of(name), "jpeg");
+}
+static bool is_image(const char *name) { return is_png(name) || is_jpeg(name); }
+
+/* Miniature : image réduite pour tenir dans size x size */
+static cairo_surface_t *make_thumb(const char *path, int size)
+{
+    struct stat st;
+    if (stat(path, &st) != 0 || st.st_size > 40 * 1024 * 1024) return NULL;   /* trop gros : icône */
+    cairo_surface_t *img = nx_load_image(path, size);
+    if (!img) return NULL;
+    double iw = cairo_image_surface_get_width(img), ih = cairo_image_surface_get_height(img);
+    double k = fmin(size / iw, size / ih);
+    if (k > 1) k = 1;
+    int tw = (int)(iw * k) > 0 ? (int)(iw * k) : 1, th = (int)(ih * k) > 0 ? (int)(ih * k) : 1;
+    cairo_surface_t *t = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, tw, th);
+    cairo_t *cr = cairo_create(t);
+    cairo_scale(cr, k, k);
+    cairo_set_source_surface(cr, img, 0, 0);
+    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
+    cairo_paint(cr);
+    cairo_destroy(cr);
+    cairo_surface_destroy(img);
+    return t;
+}
 
 static bool is_archive(const char *name)
 {
@@ -122,8 +153,7 @@ static bool looks_text(const char *path)
 static const char *icon_for(const struct entry *e)
 {
     if (e->dir) return "folder";
-    if (is_png(e->name) || !strcasecmp(ext_of(e->name), "jpg") || !strcasecmp(ext_of(e->name), "jpeg"))
-        return "image";
+    if (is_image(e->name)) return "image";
     if (is_archive(e->name)) return "archive";
     if (e->exec) return "exec";
     static const char *txt[] = { "txt", "md", "conf", "cfg", "ini", "sh", "c", "h", "py", "lua",
@@ -157,6 +187,8 @@ static bool load_dir(const char *path)
         set_status("Impossible d'ouvrir « %s » : %s", path, strerror(errno));
         return false;
     }
+    for (int i = 0; i < nents; i++)
+        if (ents[i].thumb) { cairo_surface_destroy(ents[i].thumb); ents[i].thumb = NULL; }
     nents = 0;
     struct dirent *de;
     while ((de = readdir(d))) {
@@ -176,6 +208,8 @@ static bool load_dir(const char *path)
         e->dir = S_ISDIR(st.st_mode);
         e->exec = !e->dir && (st.st_mode & 0111);
         e->size = st.st_size;
+        e->thumb = NULL;
+        e->thumb_tried = false;
         nents++;
     }
     closedir(d);
@@ -476,7 +510,7 @@ static void open_entry(int i)
     if (ents[i].dir) { navigate(p, true); return; }
     if (in_trash()) { set_status("Restaure d'abord l'élément pour l'ouvrir."); nx_redraw(win); return; }
     nx_shell_quote(q, sizeof q, p);
-    if (is_png(ents[i].name)) {
+    if (is_image(ents[i].name)) {
         snprintf(cmd, sizeof cmd, "nexus-files --view %s", q);
     } else if (looks_text(p)) {
         if (access("/usr/local/bin/nano", X_OK) != 0) {
@@ -692,6 +726,50 @@ static void build_crumbs(void)
     }
 }
 
+/* ======================= Glisser-déposer ======================= */
+
+static int drag_from = -1;           /* élément sous la souris au clic */
+static bool dragging;                /* glissement en cours */
+static double press_x, press_y, drag_x, drag_y;
+
+/* Destination sous la souris : dossier de la grille (non sélectionné) ou
+ * emplacement de la barre latérale ; NULL si aucune */
+static const char *drop_target(int kind, int index, char *buf, size_t n)
+{
+    if (kind == K_ITEM && index >= 0 && index < nents && ents[index].dir && !sel[index]) {
+        join(buf, n, cwd, ents[index].name);
+        return buf;
+    }
+    if (kind == K_PLACE && index >= 0 && index < nplaces && strcmp(places[index].path, cwd)) {
+        snprintf(buf, n, "%s", places[index].path);
+        return buf;
+    }
+    return NULL;
+}
+
+/* Déposer la sélection dans dest : déplacer (ou copier si Ctrl) ;
+ * la Corbeille = mettre à la corbeille */
+static void do_drop(const char *dest, bool copy)
+{
+    if (!strcmp(dest, trash_files)) { do_trash(); return; }
+    int ok = 0, fail = 0;
+    for (int i = 0; i < nents; i++) {
+        if (!sel[i]) continue;
+        char src[PATH_MAX], name[256], dst[PATH_MAX];
+        sel_path(i, src, sizeof src);
+        size_t sl = strlen(src);
+        if (!strncmp(dest, src, sl) && (dest[sl] == '/' || dest[sl] == 0)) { fail++; continue; }   /* dans lui-même */
+        unique_name(name, sizeof name, dest, ents[i].name);
+        join(dst, sizeof dst, dest, name);
+        int rc = copy ? copy_path(src, dst) : move_path(src, dst);
+        if (rc == 0) ok++; else fail++;
+    }
+    const char *where = strrchr(dest, '/') && dest[1] ? strrchr(dest, '/') + 1 : dest;
+    if (fail) set_status("%d élément(s) %s vers « %s », %d échec(s)", ok, copy ? "copié(s)" : "déplacé(s)", where, fail);
+    else set_status("%d élément(s) %s vers « %s »", ok, copy ? "copié(s)" : "déplacé(s)", where);
+    refresh();
+}
+
 /* ======================= Dessin ======================= */
 
 static int grid_cols(int width)
@@ -757,7 +835,16 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     for (int i = 0; i < nents; i++) {
         double x = gx + (i % cols) * CELL_W, y = cy + 12 + (i / cols) * CELL_H - scroll_y;
         if (y + CELL_H < cy || y > cy + ch) continue;
-        if (sel[i] || hovered(K_ITEM, i) || i == focus) {
+        char tb[PATH_MAX];
+        bool target = dragging && hovered(K_ITEM, i) && drop_target(K_ITEM, i, tb, sizeof tb);
+        if (target) {
+            nx_rounded_rect(cr, x + 4, y + 2, CELL_W - 8, CELL_H - 6, 8);
+            nx_set(cr, nx_alpha(accent, 0.22));
+            cairo_fill_preserve(cr);
+            nx_set(cr, accent);
+            cairo_set_line_width(cr, 2);
+            cairo_stroke(cr);
+        } else if (sel[i] || hovered(K_ITEM, i) || i == focus) {
             nx_rounded_rect(cr, x + 4, y + 2, CELL_W - 8, CELL_H - 6, 8);
             nx_set(cr, sel[i] ? nx_alpha(accent, 0.16) : nx_rgb("#f1f4f9"));
             cairo_fill_preserve(cr);
@@ -765,7 +852,33 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
             cairo_set_line_width(cr, 1);
             cairo_stroke(cr);
         }
-        nx_icon(cr, icon_for(&ents[i]), x + (CELL_W - 58) / 2, y + 10, 58, text);
+        if (!ents[i].dir && is_image(ents[i].name) && !ents[i].thumb_tried) {
+            char p[PATH_MAX];
+            sel_path(i, p, sizeof p);
+            ents[i].thumb = make_thumb(p, 96);
+            ents[i].thumb_tried = true;
+        }
+        if (ents[i].thumb) {
+            /* miniature : tient dans 96 x 62, centrée, avec un liseré */
+            double tw = cairo_image_surface_get_width(ents[i].thumb), th = cairo_image_surface_get_height(ents[i].thumb);
+            double k = fmin(96 / tw, 62 / th);
+            if (k > 1) k = 1;
+            double dw = tw * k, dh = th * k, dx = x + (CELL_W - dw) / 2, dy = y + 8 + (62 - dh) / 2;
+            cairo_save(cr);
+            nx_rounded_rect(cr, dx, dy, dw, dh, 4);
+            cairo_clip(cr);
+            cairo_translate(cr, dx, dy);
+            cairo_scale(cr, k, k);
+            cairo_set_source_surface(cr, ents[i].thumb, 0, 0);
+            cairo_paint(cr);
+            cairo_restore(cr);
+            nx_rounded_rect(cr, dx, dy, dw, dh, 4);
+            nx_set(cr, nx_rgb("#d5dae3"));
+            cairo_set_line_width(cr, 1);
+            cairo_stroke(cr);
+        } else {
+            nx_icon(cr, icon_for(&ents[i]), x + (CELL_W - 58) / 2, y + 10, 58, text);
+        }
         nx_text(cr, ents[i].name, 12.5, false, text, x + 6, y + 72, CELL_W - 12, 22, NX_CENTER);
         add_rect(x + 4, y + 2, CELL_W - 8, CELL_H - 6, K_ITEM, i);
     }
@@ -785,7 +898,15 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     for (int i = 0; i < nplaces; i++) {
         double y = TOOL_H + 38 + i * 40;
         bool cur = !strcmp(cwd, places[i].path);
-        if (cur || hovered(K_PLACE, i)) {
+        char tb[PATH_MAX];
+        if (dragging && hovered(K_PLACE, i) && drop_target(K_PLACE, i, tb, sizeof tb)) {
+            nx_rounded_rect(cr, 8, y, SIDE_W - 16, 36, 7);
+            nx_set(cr, nx_alpha(accent, 0.25));
+            cairo_fill_preserve(cr);
+            nx_set(cr, accent);
+            cairo_set_line_width(cr, 2);
+            cairo_stroke(cr);
+        } else if (cur || hovered(K_PLACE, i)) {
             nx_rounded_rect(cr, 8, y, SIDE_W - 16, 36, 7);
             nx_set(cr, cur ? nx_alpha(accent, 0.14) : nx_rgb("#e6eaf1"));
             cairo_fill(cr);
@@ -879,6 +1000,30 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     }
     nx_text(cr, left, 12.5, false, nx_rgb("#3a4152"), 16, sy, width * 0.65, STATUS_H, NX_LEFT);
     nx_text(cr, right, 12.5, false, subtle, width * 0.6, sy, width * 0.4 - 16, STATUS_H, NX_RIGHT);
+
+    /* ---- Éléments glissés (sous la souris) ---- */
+    if (dragging && drag_from >= 0 && drag_from < nents) {
+        int ns = selected_count();
+        double gx0 = drag_x + 10, gy0 = drag_y + 8;
+        nx_rounded_rect(cr, gx0, gy0, 64, 64, 10);
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.85);
+        cairo_fill_preserve(cr);
+        nx_set(cr, nx_alpha(accent, 0.6));
+        cairo_set_line_width(cr, 1.5);
+        cairo_stroke(cr);
+        nx_icon(cr, icon_for(&ents[drag_from]), gx0 + 10, gy0 + 10, 44, text);
+        if (ns > 1) {
+            char nb[16];
+            snprintf(nb, sizeof nb, "%d", ns);
+            cairo_new_path(cr);
+            cairo_arc(cr, gx0 + 60, gy0 + 4, 12, 0, 2 * M_PI);
+            nx_set(cr, accent);
+            cairo_fill(cr);
+            nx_text(cr, nb, 11.5, true, nx_rgb("#ffffff"), gx0 + 48, gy0 - 8, 24, 24, NX_CENTER);
+        }
+        const char *hint = nx_mod_ctrl() ? "Copier" : "Déplacer";
+        nx_text(cr, hint, 11.5, true, accent, gx0, gy0 + 66, 64, 18, NX_CENTER);
+    }
 
     /* ---- Menu contextuel ---- */
     if (menu_open) {
@@ -981,6 +1126,11 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
     int k = r ? (int)r->kind : -1, i = r ? r->index : -1;
     switch (ev) {
     case NX_MOTION:
+        if (drag_from >= 0 && !dragging && !in_trash() && hypot(x - press_x, y - press_y) > 8) {
+            dragging = true;
+            if (!sel[drag_from]) select_only(drag_from);
+        }
+        if (dragging) { drag_x = x; drag_y = y; hover_kind = k; hover_index = i; nx_redraw(w); break; }
         if (k != hover_kind || i != hover_index) { hover_kind = k; hover_index = i; nx_redraw(w); }
         break;
     case NX_LEAVE:
@@ -1000,11 +1150,19 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
                 open_menu(x, y, true);
             } else if (value == BTN_LEFT) {
                 double t = now_s();
+                drag_from = i;
+                press_x = x;
+                press_y = y;
                 if (getenv("NX_DEBUG"))
                     fprintf(stderr, "clic : élément %d, précédent %d, écart %.3f s\n",
                             i, last_click_index, t - last_click_time);
                 if (nx_mod_ctrl()) { sel[i] = !sel[i]; focus = i; }
-                else if (i == last_click_index && t - last_click_time < 0.45) { open_entry(i); last_click_index = -1; break; }
+                else if (i == last_click_index && t - last_click_time < 0.45) {
+                    drag_from = -1;
+                    open_entry(i);
+                    last_click_index = -1;
+                    break;
+                }
                 else select_only(i);
                 last_click_time = t;
                 last_click_index = i;
@@ -1017,6 +1175,15 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
         }
         break;
     case NX_RELEASE:
+        if (value == BTN_LEFT && dragging) {
+            char dest[PATH_MAX];
+            if (drop_target(k, i, dest, sizeof dest)) do_drop(dest, nx_mod_ctrl());
+            dragging = false;
+            drag_from = -1;
+            nx_redraw(w);
+            break;
+        }
+        if (value == BTN_LEFT) drag_from = -1;
         if (value != BTN_LEFT || k != press_kind || i != press_index) break;
         if (dialog != DLG_NONE) {
             if (k == K_DLG_OK) confirm_dialog();
@@ -1166,11 +1333,7 @@ static void viewer_load(void)
     if (nimgs == 0) return;
     char p[PATH_MAX];
     join(p, sizeof p, view_dir, imgs[cur_img]);
-    img_surface = cairo_image_surface_create_from_png(p);
-    if (cairo_surface_status(img_surface) != CAIRO_STATUS_SUCCESS) {
-        cairo_surface_destroy(img_surface);
-        img_surface = NULL;
-    }
+    img_surface = nx_load_image(p, 0);
     if (win && win->toplevel) {
         char t[300];
         snprintf(t, sizeof t, "%s — Visionneuse", imgs[cur_img]);
@@ -1199,7 +1362,7 @@ static void viewer_draw(struct nx_window *w, cairo_t *cr, int width, int height)
         cairo_paint(cr);
         cairo_restore(cr);
     } else {
-        nx_text(cr, "Impossible d'afficher cette image (seul le format PNG est pris en charge).",
+        nx_text(cr, "Impossible d'afficher cette image (formats pris en charge : PNG et JPEG).",
                 14, false, nx_alpha(white, 0.8), 0, ah / 2 - 15, width, 30, NX_CENTER);
     }
     cairo_rectangle(cr, 0, ah, width, bar);
@@ -1286,12 +1449,12 @@ static int viewer_main(const char *path)
     char wanted[256];
     snprintf(wanted, sizeof wanted, "%s", name);
     if (slash == view_dir) view_dir[1] = 0; else *slash = 0;
-    /* Toutes les images PNG du dossier, pour passer de l'une à l'autre */
+    /* Toutes les images (PNG, JPEG) du dossier, pour passer de l'une à l'autre */
     DIR *d = opendir(view_dir);
     if (d) {
         struct dirent *de;
         while ((de = readdir(d)))
-            if (de->d_name[0] != '.' && is_png(de->d_name)) {
+            if (de->d_name[0] != '.' && is_image(de->d_name)) {
                 imgs = realloc(imgs, (nimgs + 1) * sizeof *imgs);
                 imgs[nimgs++] = strdup(de->d_name);
             }

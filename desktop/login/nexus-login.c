@@ -26,6 +26,23 @@
 
 #define RESULT_FILE "/run/nexus-login.user"
 
+/* Disposition du clavier de l'écran de connexion : celle du système
+ * (nexus-keymap xkb -> XKB_LAYOUT=..., XKB_VARIANT=...) */
+static void set_keyboard(void)
+{
+    setenv("XKB_DEFAULT_LAYOUT", "fr", 1);
+    unsetenv("XKB_DEFAULT_VARIANT");
+    FILE *f = popen("/usr/sbin/nexus-keymap xkb 2>/dev/null", "r");
+    if (!f) return;
+    char line[128];
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\n")] = 0;
+        if (!strncmp(line, "XKB_LAYOUT=", 11) && line[11]) setenv("XKB_DEFAULT_LAYOUT", line + 11, 1);
+        if (!strncmp(line, "XKB_VARIANT=", 12) && line[12]) setenv("XKB_DEFAULT_VARIANT", line + 12, 1);
+    }
+    pclose(f);
+}
+
 static void text_login(void)
 {
     execl("/usr/sbin/nexus-getty", "nexus-getty", "tty1", "38400", "linux", (char *)NULL);
@@ -54,7 +71,7 @@ static void common_env(void)
     setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin", 1);
     setenv("LANG", "C.UTF-8", 1);
     setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 0);
-    setenv("XKB_DEFAULT_LAYOUT", "fr", 1);
+    set_keyboard();
     setenv("XCOMPOSEFILE", "/usr/local/share/X11/locale/en_US.UTF-8/Compose", 1);
     setenv("XDG_DATA_DIRS", "/usr/local/share", 1);
     setenv("LIBSEAT_BACKEND", "seatd", 1);

@@ -202,6 +202,10 @@ void nx_ago(char *out, size_t n, long when);
 bool nx_toggle_instance(const char *name);
 void nx_instance_done(void);
 
+/* Charge une image PNG ou JPEG (NULL si illisible). min_dim > 0 : un JPEG
+ * peut être décodé en plus petit tant que ses côtés restent >= min_dim. */
+cairo_surface_t *nx_load_image(const char *path, int min_dim);
+
 /* Lance une commande en arrière-plan, détachée (sh -c) */
 void nx_spawn(const char *cmd);
 /* Signale aux programmes du bureau que la configuration a changé */

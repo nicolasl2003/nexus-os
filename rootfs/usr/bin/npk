@@ -267,16 +267,25 @@ cmd_remove() {
     done
 }
 
-cmd_upgrade() {
-    need_index
-    _todo=""
+# Paquets installés dont le dépôt propose une autre version (un nom par ligne)
+outdated() {
     for _p in "$DB"/installed/*/PKGINFO; do
         [ -f "$_p" ] || continue
         _name=$(basename "$(dirname "$_p")")
         _line=$(idx_line "$_name"); [ -n "$_line" ] || continue
-        [ "$(field "$_line" 2)" = "$(pkginfo "$_name" VERSION)" ] || _todo="$_todo $_name"
+        [ "$(field "$_line" 2)" = "$(pkginfo "$_name" VERSION)" ] || echo "$_name"
     done
-    [ -n "$_todo" ] || { say "Tout est à jour."; return 0; }
+}
+
+cmd_outdated() {
+    [ -f "$INDEX" ] || exit 0
+    outdated
+}
+
+cmd_upgrade() {
+    need_index
+    _todo=$(outdated | tr '\n' ' ')
+    [ -n "${_todo% }" ] || { say "Tout est à jour."; return 0; }
     cmd_install $_todo
 }
 
@@ -294,6 +303,7 @@ npk — gestionnaire de paquets de Nexus OS
   npk install <paquet>... installe (avec ses dépendances)
   npk remove <paquet>...  désinstalle
   npk upgrade             met à jour les paquets installés
+  npk outdated            liste les paquets qui ont une mise à jour
   npk list                liste les paquets installés
   npk info <paquet>       détails d'un paquet
   npk files <paquet>      fichiers installés par un paquet
@@ -312,6 +322,7 @@ case "$cmd" in
     install|i|add) need_root install "$@";      cmd_install "$@" ;;
     remove|rm|del) need_root remove "$@";       cmd_remove "$@" ;;
     upgrade|up)    need_root upgrade;           cmd_upgrade ;;
+    outdated)      cmd_outdated ;;
     list|ls)       cmd_list ;;
     info)          cmd_info "$@" ;;
     files)         cmd_files "$@" ;;

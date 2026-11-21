@@ -13,6 +13,7 @@
 
 #include <ctype.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <math.h>
 #include <pwd.h>
 #include <signal.h>
@@ -32,13 +33,13 @@
 #define SIDE_W   214
 #define PAD      30
 
-enum { SEC_WALL, SEC_COLORS, SEC_PANEL, SEC_ICONS, SEC_WIDGETS, SEC_DISPLAY, SEC_ACCOUNTS, SEC_ABOUT,
-       SEC_COUNT };
+enum { SEC_WALL, SEC_COLORS, SEC_PANEL, SEC_ICONS, SEC_WIDGETS, SEC_DISPLAY, SEC_KEYBOARD,
+       SEC_ACCOUNTS, SEC_ABOUT, SEC_COUNT };
 static const struct { const char *label, *icon; } sections[SEC_COUNT] = {
     { "Fond d'écran", "image" },     { "Couleurs", "palette" },
     { "Barre et menu", "panel" },    { "Icônes", "apps" },
     { "Widgets", "monitor" },        { "Affichage", "display" },
-    { "Comptes", "user" },           { "À propos", "info" },
+    { "Clavier", "keyboard" },       { "Comptes", "user" },           { "À propos", "info" },
 };
 static int section = SEC_WALL;
 
@@ -46,7 +47,7 @@ static int section = SEC_WALL;
 
 enum kind { K_NAV, K_WALL, K_ACCENT, K_SCALE, K_TOGGLE, K_PANEL, K_ISIZE, K_ISTYLE, K_ISHAPE,
             K_OPACITY, K_TINT, K_MENU, K_WSIZE, K_WSTYLE, K_WRESET,
-            K_ACC_ADD, K_ACC_PW, K_ACC_DEL, K_DLG_FIELD, K_DLG_OK, K_DLG_CANCEL, K_DLG_WIPE };
+            K_ACC_ADD, K_ACC_PW, K_ACC_DEL, K_DLG_FIELD, K_DLG_OK, K_DLG_CANCEL, K_DLG_WIPE, K_KB };
 struct rect { double x, y, w, h; enum kind kind; int index; };
 static struct rect rects[96];
 static int nrects;
@@ -76,10 +77,12 @@ static void scan_images(const char *dir)
     struct dirent *e;
     while ((e = readdir(d)) && nwalls < 18) {
         size_t n = strlen(e->d_name);
-        if (n < 5 || strcasecmp(e->d_name + n - 4, ".png")) continue;
+        const char *dot = strrchr(e->d_name, '.');
+        if (n < 5 || !dot || (strcasecmp(dot, ".png") && strcasecmp(dot, ".jpg") && strcasecmp(dot, ".jpeg")))
+            continue;
         struct wall *w = &walls[nwalls++];
         snprintf(w->spec, sizeof w->spec, "%s/%s", dir, e->d_name);
-        snprintf(w->name, sizeof w->name, "%.*s", (int)(n - 4), e->d_name);
+        snprintf(w->name, sizeof w->name, "%.*s", (int)(dot - e->d_name), e->d_name);
         w->swatch = false;
     }
     closedir(d);
@@ -937,6 +940,95 @@ static void draw_about(cairo_t *cr, double x0, double cw)
     (void)pretty_name;
 }
 
+/* ---------- Clavier ---------- */
+
+/* Même liste que /usr/sbin/nexus-keymap (id, disposition XKB, variante, nom) */
+static const struct { const char *id, *layout, *variant, *label; } kbs[] = {
+    { "fr", "fr", "", "Français (AZERTY)" },     { "fr-bepo", "fr", "bepo", "Français (BÉPO)" },
+    { "fr-mac", "fr", "mac", "Français (Mac)" },   { "be", "be", "", "Belge" },
+    { "ch-fr", "ch", "fr", "Suisse romand" },      { "ch-de", "ch", "", "Suisse alémanique" },
+    { "ca", "ca", "", "Canadien français" },       { "us", "us", "", "Anglais (US)" },
+    { "gb", "gb", "", "Anglais (UK)" },            { "de", "de", "", "Allemand" },
+    { "es", "es", "", "Espagnol" },                { "it", "it", "", "Italien" },
+    { "pt", "pt", "", "Portugais" },
+};
+#define NKBS ((int)(sizeof kbs / sizeof kbs[0]))
+static int kb_current = 0;
+static char kb_test[96], kb_msg[160];
+
+static void load_keyboard(void)
+{
+    char id[32] = "fr";
+    FILE *f = fopen("/etc/keyboard", "r");
+    if (f) { if (fgets(id, sizeof id, f)) id[strcspn(id, "\n")] = 0; fclose(f); }
+    for (int i = 0; i < NKBS; i++)
+        if (!strcmp(kbs[i].id, id)) kb_current = i;
+}
+
+static void set_keyboard(int i)
+{
+    /* 1. Système (consoles texte, écran de connexion) : via nexus-power,
+     *    autorisé aux comptes du bureau (groupe video) */
+    void (*old)(int) = signal(SIGCHLD, SIG_DFL);
+    pid_t pid = fork();
+    if (pid == 0) {
+        int fd = open("/dev/null", O_RDWR);
+        if (fd >= 0) { dup2(fd, 1); dup2(fd, 2); }
+        execl("/usr/local/libexec/nexus-power", "nexus-power", "keymap", kbs[i].id, (char *)NULL);
+        _exit(127);
+    }
+    int st = 0;
+    bool sys_ok = pid > 0 && waitpid(pid, &st, 0) > 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0;
+    signal(SIGCHLD, old);
+
+    /* 2. Bureau : fichier d'environnement de labwc, relu sur SIGHUP */
+    const char *home = getenv("HOME") ? getenv("HOME") : "/tmp";
+    char dir[512], path[600];
+    snprintf(dir, sizeof dir, "%s/.config", home); mkdir(dir, 0755);
+    snprintf(dir, sizeof dir, "%s/.config/labwc", home); mkdir(dir, 0755);
+    snprintf(path, sizeof path, "%s/environment", dir);
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "# Écrit par Paramètres → Clavier\n");
+        fprintf(f, "XKB_DEFAULT_LAYOUT=%s\n", kbs[i].layout);
+        fprintf(f, "XKB_DEFAULT_VARIANT=%s\n", kbs[i].variant);
+        fclose(f);
+    }
+    const char *lp = getenv("LABWC_PID");
+    if (lp && atoi(lp) > 1) kill(atoi(lp), SIGHUP);
+
+    kb_current = i;
+    kb_test[0] = 0;
+    snprintf(kb_msg, sizeof kb_msg, sys_ok ? "Clavier « %s » appliqué au bureau et aux consoles texte."
+                                          : "Clavier « %s » appliqué au bureau (consoles : non modifiées).",
+             kbs[i].label);
+}
+
+static void draw_keyboard_section(cairo_t *cr, double x0, double cw)
+{
+    section_title(cr, x0, "Clavier", "Disposition des touches, pour le bureau et les consoles texte.");
+    double gap = 10, w3 = (cw - 2 * gap) / 3, y = 96;
+    for (int i = 0; i < NKBS; i++) {
+        double x = x0 + (i % 3) * (w3 + gap), yy = y + (i / 3) * 52;
+        choice_card(cr, x, yy, w3, 44, K_KB, i, i == kb_current, NULL);
+        nx_text(cr, kbs[i].label, 13, i == kb_current, nx_rgb(NX_TEXT), x + 12, yy, w3 - 36, 44, NX_LEFT);
+    }
+    y += ((NKBS + 2) / 3) * 52 + 14;
+    nx_text(cr, "Essaie ton clavier ici :", 13, true, nx_rgb(NX_TEXT), x0, y, cw, 22, NX_LEFT);
+    nx_rounded_rect(cr, x0, y + 26, cw, 40, 10);
+    nx_set(cr, nx_rgb("#f6f7fa"));
+    cairo_fill_preserve(cr);
+    nx_set(cr, nx_accent_color());
+    cairo_set_line_width(cr, 1.5);
+    cairo_stroke(cr);
+    char shown[112];
+    snprintf(shown, sizeof shown, "%s|", kb_test);
+    nx_text(cr, kb_test[0] ? shown : "Tape quelques lettres : a z q w é è ç à ù…", 14, false,
+            nx_rgb(kb_test[0] ? NX_TEXT : NX_SUBTLE), x0 + 14, y + 26, cw - 28, 40, NX_LEFT);
+    if (kb_msg[0])
+        nx_text(cr, kb_msg, 12.5, false, nx_rgb(NX_SUBTLE), x0, y + 76, cw, 22, NX_LEFT);
+}
+
 static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
 {
     (void)w;
@@ -980,6 +1072,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     case SEC_WIDGETS: draw_widgets_section(cr, x0, cw); break;
     case SEC_ACCOUNTS: draw_accounts_section(cr, x0, cw); break;
     case SEC_DISPLAY: draw_display(cr, x0, cw); break;
+    case SEC_KEYBOARD: draw_keyboard_section(cr, x0, cw); break;
     case SEC_ABOUT: draw_about(cr, x0, cw); break;
     }
     if (dlg) draw_account_dialog(cr, width, height);
@@ -1024,6 +1117,7 @@ static void click(struct rect *r)
     case K_DLG_WIPE: dlg_wipe = !dlg_wipe; break;
     case K_DLG_OK: dialog_submit(); break;
     case K_DLG_CANCEL: close_dialog(); break;
+    case K_KB: set_keyboard(r->index); break;
     case K_ISIZE: nx_conf.icon_size = r->index; apply(); break;
     case K_ISTYLE: nx_conf.icon_style = r->index; apply(); break;
     case K_ISHAPE: nx_conf.icon_shape = r->index; nx_conf.icon_style = 0; apply(); break;
@@ -1075,6 +1169,19 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
 static void key(struct nx_window *w, xkb_keysym_t sym, const char *utf8)
 {
     if (dialog_key(sym, utf8)) { nx_redraw(w); return; }
+    if (section == SEC_KEYBOARD && sym == XKB_KEY_BackSpace && kb_test[0]) {
+        size_t l = strlen(kb_test);
+        while (l > 0 && ((unsigned char)kb_test[l - 1] & 0xC0) == 0x80) l--;   /* caractère UTF-8 entier */
+        kb_test[l > 0 ? l - 1 : 0] = 0;
+        nx_redraw(w);
+        return;
+    }
+    if (section == SEC_KEYBOARD && utf8 && (unsigned char)utf8[0] >= 0x20 && utf8[0] != 0x7f &&
+        strlen(kb_test) + strlen(utf8) < sizeof kb_test - 1) {
+        strcat(kb_test, utf8);
+        nx_redraw(w);
+        return;
+    }
     if (sym == XKB_KEY_Escape) nx_quit();
     else if (sym == XKB_KEY_Down || sym == XKB_KEY_Tab) section = (section + 1) % SEC_COUNT;
     else if (sym == XKB_KEY_Up) section = (section + SEC_COUNT - 1) % SEC_COUNT;
@@ -1092,12 +1199,14 @@ int settings_main(int argc, char **argv)
         else if (!strcmp(argv[i], "--icons")) section = SEC_ICONS;
         else if (!strcmp(argv[i], "--widgets")) section = SEC_WIDGETS;
         else if (!strcmp(argv[i], "--accounts")) section = SEC_ACCOUNTS;
+        else if (!strcmp(argv[i], "--keyboard")) section = SEC_KEYBOARD;
         else if (!strcmp(argv[i], "--about")) section = SEC_ABOUT;
     }
     if (!nx_init()) return 1;
     load_walls();
     load_info();
     load_accounts();
+    load_keyboard();
     struct nx_handlers h = { .draw = draw, .pointer = pointer, .key = key };
     win = nx_toplevel_window(h, "Paramètres", "nexus-settings", WIN_W, WIN_H);
     if (!win) return 1;

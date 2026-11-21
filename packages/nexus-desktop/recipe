@@ -1,6 +1,6 @@
 NAME=nexus-desktop
-VERSION=0.8.0
-DEPENDS="labwc foot alsa"
+VERSION=0.9.0
+DEPENDS="labwc foot alsa wifi"
 DESC="Le bureau de Nexus OS : connexion graphique, barre des tâches, menu Démarrer, widgets, fichiers"
 
 . "$PKG_LIB/gui.sh"
@@ -14,7 +14,7 @@ build() {
     apps="$BUILD_DIR/gui/nexus-apps/bin"
     [ -x "$apps/nexus-shell" ] || { echo "Programmes du bureau absents : lance 'make desktop-apps'" >&2; exit 1; }
     install -m 755 "$apps/nexus-shell" "$DESTDIR$PREFIX/bin/nexus-shell"
-    for prog in nexus-panel nexus-menu nexus-wallpaper nexus-settings nexus-files nexus-widgets nexus-greeter nexus-volume nexus-network nexus-store; do
+    for prog in nexus-panel nexus-menu nexus-wallpaper nexus-settings nexus-files nexus-widgets nexus-greeter nexus-volume nexus-network nexus-store nexus-notifyd nexus-notify; do
         ln -s nexus-shell "$DESTDIR$PREFIX/bin/$prog"
     done
     # Arrêt/redémarrage depuis le menu : setuid root, réservé au groupe video

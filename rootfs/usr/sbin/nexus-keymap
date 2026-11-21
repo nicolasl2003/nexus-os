@@ -1,0 +1,64 @@
+#!/bin/sh
+# nexus-keymap — disposition du clavier de Nexus OS (consoles texte et bureau)
+#
+#   nexus-keymap              affiche la disposition actuelle
+#   nexus-keymap list         liste les dispositions disponibles
+#   nexus-keymap set <id>     (root) choisit la disposition, ex. : fr, us, be
+#   nexus-keymap boot         (démarrage) applique la disposition enregistrée
+#
+# La disposition est enregistrée dans /etc/keyboard (et /data/keyboard pour
+# la garder après redémarrage). Les consoles utilisent les tables binaires de
+# /usr/share/keymaps (chargées par loadkmap) ; le bureau lit XKB_LAYOUT et
+# XKB_VARIANT avec « nexus-keymap xkb ».
+
+MAPS=/usr/share/keymaps
+
+# id | disposition XKB | variante XKB | nom affiché
+table() {
+    cat <<'EOF'
+fr|fr||Français (AZERTY)
+fr-bepo|fr|bepo|Français (BÉPO)
+fr-mac|fr|mac|Français (Mac)
+be|be||Belge (AZERTY)
+ch-fr|ch|fr|Suisse romand
+ch-de|ch||Suisse alémanique
+ca|ca||Canadien français
+us|us||Anglais (États-Unis, QWERTY)
+gb|gb||Anglais (Royaume-Uni)
+de|de||Allemand (QWERTZ)
+es|es||Espagnol
+it|it||Italien
+pt|pt||Portugais
+EOF
+}
+
+current() {
+    k=$(cat /etc/keyboard 2>/dev/null)
+    table | grep -q "^$k|" || k=fr
+    echo "$k"
+}
+
+field() { table | grep "^$1|" | cut -d'|' -f"$2"; }
+
+apply_console() {
+    [ -f "$MAPS/$1.bmap.gz" ] || return 1
+    zcat "$MAPS/$1.bmap.gz" | loadkmap 2>/dev/null
+}
+
+case "${1:-}" in
+    "")   k=$(current); echo "$k — $(field "$k" 4)" ;;
+    list) table | while IFS='|' read -r id _ _ name; do printf "%-8s %s\n" "$id" "$name"; done ;;
+    xkb)  k=$(current); echo "XKB_LAYOUT=$(field "$k" 2)"; echo "XKB_VARIANT=$(field "$k" 3)" ;;
+    boot)
+        [ -f /data/keyboard ] && cp /data/keyboard /etc/keyboard
+        apply_console "$(current)" ;;
+    set)
+        [ "$(id -u)" = 0 ] || { echo "nexus-keymap : lance cette commande en root (su -c 'nexus-keymap set ${2:-fr}')" >&2; exit 1; }
+        k="${2:-}"
+        table | grep -q "^$k|" || { echo "nexus-keymap : disposition inconnue « $k » (voir : nexus-keymap list)" >&2; exit 2; }
+        echo "$k" > /etc/keyboard
+        [ -d /data ] && mountpoint -q /data && echo "$k" > /data/keyboard
+        apply_console "$k"
+        echo "Clavier : $(field "$k" 4)" ;;
+    *) echo "Usage : nexus-keymap [list | set <id> | xkb]" >&2; exit 2 ;;
+esac

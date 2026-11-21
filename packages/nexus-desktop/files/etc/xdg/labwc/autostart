@@ -2,5 +2,6 @@
 nexus-wallpaper &
 nexus-panel &
 nexus-widgets &
+nexus-notifyd &
 # Petit carillon d'ouverture de session
 [ -x /usr/local/bin/aplay ] && aplay -q /usr/local/share/sounds/nexus/connexion.wav &

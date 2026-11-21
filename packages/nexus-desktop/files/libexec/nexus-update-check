@@ -1,0 +1,33 @@
+#!/bin/sh
+# nexus-update-check — vérifie les mises à jour (lancé par le service « updates »)
+# Au démarrage (après 30 s, le temps que le réseau arrive) puis toutes les
+# 6 heures : « npk update », puis s'il y a des paquets à mettre à jour, dépose
+# une notification système que le bureau affiche en bulle :
+#   « 3 mises à jour disponibles » (clic : ouvre le Magasin, onglet Mises à jour)
+SPOOL=/run/nexus/notify
+mkdir -p "$SPOOL" && chmod 755 /run/nexus "$SPOOL"
+
+check() {
+    npk update >/dev/null 2>&1 || return
+    n=$(npk outdated 2>/dev/null | wc -l)
+    if [ "$n" -gt 0 ]; then
+        names=$(npk outdated | head -4 | tr '\n' ' ')
+        [ "$n" -gt 4 ] && names="$names…"
+        if [ "$n" = 1 ]; then t="1 mise à jour disponible"; else t="$n mises à jour disponibles"; fi
+        # Nom de fichier unique par contenu : le bureau ne la montre qu'une fois
+        f="$SPOOL/updates-$(echo "$n $names" | md5sum | cut -c1-8)"
+        if [ ! -f "$f" ]; then
+            rm -f "$SPOOL"/updates-*
+            printf '%s\n%s\n%s\n%s\n' "$t" "$names— clique pour les installer." "store" "nexus-store --updates" > "$f.tmp"
+            chmod 644 "$f.tmp" && mv "$f.tmp" "$f"
+        fi
+    else
+        rm -f "$SPOOL"/updates-*
+    fi
+}
+
+sleep 30
+while :; do
+    check
+    sleep 21600
+done

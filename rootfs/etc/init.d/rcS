@@ -51,6 +51,9 @@ fi
 
 hostname -F /etc/hostname
 
+# Disposition du clavier des consoles (AZERTY par défaut, voir nexus-keymap)
+/usr/sbin/nexus-keymap boot
+
 # Groupes d'accès au matériel : audio (son), netdev (Wi-Fi), video (écran)
 for g in audio netdev video; do grep -q "^$g:" /etc/group || addgroup -S "$g"; done
 
@@ -86,7 +89,7 @@ syslogd -O /var/log/messages -s 512
 . /etc/os-release
 {
     echo
-    echo "$PRETTY_NAME — \\n (\\l)"
+    echo "$PRETTY_NAME - \\n (\\l)"
     if [ "$PERSIST" = 1 ]; then
         echo "Persistance : $DATA_DEV monté sur /data"
     else

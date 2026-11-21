@@ -22,7 +22,10 @@ export XDG_DATA_DIRS=/usr/local/share
 export XDG_SESSION_TYPE=wayland
 export LIBSEAT_BACKEND=seatd
 export WLR_RENDERER=pixman          # rendu logiciel (pas besoin de 3D)
-export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-fr}"
+# Clavier : disposition choisie dans Paramètres → Clavier (nexus-keymap)
+eval "$(/usr/sbin/nexus-keymap xkb 2>/dev/null)"
+export XKB_DEFAULT_LAYOUT="${XKB_LAYOUT:-fr}"
+[ -n "${XKB_VARIANT:-}" ] && export XKB_DEFAULT_VARIANT="$XKB_VARIANT"
 # Touches mortes (^ puis e = ê) : table Compose de X.org
 export XCOMPOSEFILE=/usr/local/share/X11/locale/en_US.UTF-8/Compose
 export LANG="${LANG:-C.UTF-8}"

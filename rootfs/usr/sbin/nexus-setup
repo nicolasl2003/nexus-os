@@ -50,8 +50,16 @@ else
     printf "%bReconfiguration de Nexus OS.%b\n" "$B" "$R"
 fi
 
-# 1. Nom de la machine
-title "1/4  Nom de la machine"
+# 1. Clavier (en premier : les mots de passe se tapent avec)
+title "1/5  Clavier"
+nexus-keymap list | sed 's/^/  /'
+cur=$(nexus-keymap | cut -d' ' -f1)
+printf "Disposition [%s] : " "$cur"; read -r km
+km="${km:-$cur}"
+nexus-keymap set "$km" 2>/dev/null || { err "Disposition inconnue, on garde '$cur'."; nexus-keymap set "$cur" >/dev/null; }
+
+# 2. Nom de la machine
+title "2/5  Nom de la machine"
 current=$(hostname)
 printf "Nom [%s] : " "$current"; read -r name
 name="${name:-$current}"
@@ -62,13 +70,13 @@ echo "$name" > /etc/hostname
 [ -d /data ] && echo "$name" > /data/hostname
 hostname "$name"
 
-# 2. Mot de passe root
-title "2/4  Mot de passe administrateur (root)"
+# 3. Mot de passe root
+title "3/5  Mot de passe administrateur (root)"
 ask_password "Mot de passe root"
 echo "root:$PASSWORD" | chpasswd >/dev/null && echo "Mot de passe root enregistré."
 
-# 3. Compte utilisateur
-title "3/4  Ton compte utilisateur"
+# 4. Compte utilisateur
+title "4/5  Ton compte utilisateur"
 echo "Il est conseillé de travailler avec un compte normal et d'utiliser"
 echo "'su' pour les tâches d'administration. Laisse vide pour passer."
 while :; do
@@ -95,7 +103,7 @@ done
 
 unset PASSWORD p1 p2
 
-# 4. Bureau graphique (installé depuis le dépôt npk s'il n'est pas déjà là)
+# 5. Bureau graphique (installé depuis le dépôt npk s'il n'est pas déjà là)
 install_desktop() {
     printf "Connexion au dépôt de paquets"
     i=0
@@ -121,7 +129,7 @@ install_desktop() {
 }
 
 if [ ! -x /usr/local/sbin/nexus-login ]; then
-    title "4/4  Bureau graphique"
+    title "5/5  Bureau graphique"
     printf "Installer le bureau graphique Nexus maintenant ? [O/n] "; read -r rep
     case "$rep" in
         [nN]*) echo "Pas de bureau. Plus tard : su -c \"npk update && npk install nexus-desktop\"" ;;

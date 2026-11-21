@@ -22,7 +22,7 @@ for xml in "$SRC"/protocols/*.xml; do
     "$P/bin/wayland-scanner" private-code "$xml" "$OUT/gen/$n-protocol.c"
 done
 
-DEPS="cairo pangocairo wayland-client wayland-cursor xkbcommon alsa"
+DEPS="cairo pangocairo wayland-client wayland-cursor xkbcommon alsa libjpeg"
 log "Compilation de nexus-shell"
 # shellcheck disable=SC2046
 gcc -static -O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter \
