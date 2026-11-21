@@ -597,3 +597,36 @@ Testé dans une VM vierge : assistant (clavier, bureau), AZERTY en console et à
 la connexion, passage US/AZERTY en direct, bulles (test, mise à jour → clic →
 Magasin), miniatures, déplacement vers Documents et Corbeille, visionneuse
 JPEG, connexion Wi-Fi simulée (`nexus-wifi-test`) avec notification.
+
+## Nexus 0.10 : assistant de configuration graphique
+
+Au **premier démarrage** (ou après `make disk-reset`), une fenêtre guide la
+configuration, étape par étape (colonne de gauche) :
+
+1. **Bienvenue** : ce qu'est Nexus OS et ce que fait l'assistant ;
+2. **Clavier** : 13 dispositions, appliquées tout de suite (zone d'essai) ;
+3. **Ordinateur** : nom de la machine (vérifié : lettres, chiffres, tirets) ;
+4. **Administrateur** : mot de passe root, avec l'explication de son rôle ;
+5. **Ton compte** : nom (mis en minuscules) et mot de passe, confirmés ;
+6. **Apparence** : couleur d'accent et fond d'écran (aperçu en direct) ;
+7. **Découvrir Nexus** : barre et menu, Fichiers, Magasin, Paramètres,
+   fenêtres, terminal ;
+8. **Terminé** : récapitulatif ; « Commencer » ouvre l'écran de connexion
+   avec le compte présélectionné.
+
+Entrée = suivant, Échap = retour, Tab = champ suivant. Rien n'est modifié
+avant « Appliquer et terminer ».
+
+**Bureau embarqué** : pour que cette fenêtre puisse s'afficher sur un disque
+vierge, l'image système contient les paquets du bureau (`nexus-desktop`,
+`netsurf` et leurs dépendances, ≈ 27 Mo, liste `PREINSTALL` dans
+`scripts/build-rootfs.sh`). Au premier démarrage, `rcS` les installe **sans
+réseau** (`NPK_REPO_URL=file:///usr/share/nexus/preinstall npk install …`,
+signature et SHA-256 vérifiés comme d'habitude), puis efface ces copies de la
+mémoire. Ensuite, les mises à jour viennent du dépôt normal.
+
+Programmes : `desktop/shell/assistant.c` (`nexus-assistant`), lancé par
+`nexus-login` dans un labwc dédié (`/run/nexus/assistant-labwc`). Si
+l'affichage graphique ne marche pas, l'assistant en mode texte
+(`nexus-setup`) prend le relais ; sur la console série il reste disponible
+(un seul assistant à la fois, verrou `/run/nexus-setup.lock`).

@@ -21,6 +21,8 @@ INDEX="$DB/INDEX"
 REPO_URL="http://10.0.2.2:8080"
 [ -f /etc/npk/repo.conf ] && . /etc/npk/repo.conf
 [ -f "$NPK_ROOT/etc/npk/repo.conf" ] && . "$NPK_ROOT/etc/npk/repo.conf"
+# Dépôt imposé pour une commande (ex. paquets embarqués, file:///chemin)
+[ -n "${NPK_REPO_URL:-}" ] && REPO_URL="$NPK_REPO_URL"
 
 die() { printf '\033[1;31mnpk :\033[0m %s\n' "$*" >&2; exit 1; }
 say() { printf '\033[1;36m::\033[0m %s\n' "$*"; }
@@ -30,6 +32,9 @@ say() { printf '\033[1;36m::\033[0m %s\n' "$*"; }
 # Téléchargement : curl (HTTPS, certificats vérifiés) s'il est installé,
 # sinon wget de BusyBox (HTTP seulement : il ne vérifie pas les certificats).
 download() {
+    case "$1" in
+        file://*) cp "${1#file://}" "$2" 2>/dev/null; return ;;   # dépôt local
+    esac
     if [ -x "$NPK_ROOT/bin/curl" ]; then
         "$NPK_ROOT/bin/curl" -fsSL --retry 2 -o "$2" "$1"
     else

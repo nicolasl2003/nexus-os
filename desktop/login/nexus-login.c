@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -106,6 +107,32 @@ static void run_greeter(char *user, size_t n)
     }
 }
 
+/* Assistant de configuration graphique (premier démarrage), dans un labwc
+ * dédié dont le dossier de configuration est dans /run : l'assistant peut y
+ * écrire la disposition du clavier choisie (relue par labwc sur SIGHUP). */
+#define ASSISTANT_CONF "/run/nexus/assistant-labwc"
+static void run_assistant(void)
+{
+    mkdir("/run/nexus", 0755);
+    mkdir(ASSISTANT_CONF, 0700);
+    if (system("cp /usr/local/etc/nexus/greeter/rc.xml " ASSISTANT_CONF "/rc.xml 2>/dev/null") != 0) { /* défauts de labwc */ }
+    FILE *f = fopen(ASSISTANT_CONF "/environment", "w");
+    if (f) fclose(f);
+    pid_t pid = fork();
+    if (pid == 0) {
+        clearenv();
+        common_env();
+        setenv("HOME", "/root", 1);
+        mkdir("/run/user", 01777);
+        mkdir("/run/user/0", 0700);
+        setenv("XDG_RUNTIME_DIR", "/run/user/0", 1);
+        setenv("NEXUS_ASSISTANT_CONF", ASSISTANT_CONF, 1);
+        execl("/usr/local/bin/labwc", "labwc", "-C", ASSISTANT_CONF, "-s", "nexus-assistant", (char *)NULL);
+        _exit(127);
+    }
+    if (pid > 0) while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+}
+
 /* Ouvre la session du compte et attend sa fermeture */
 static void run_session(const char *name)
 {
@@ -149,8 +176,19 @@ int main(void)
     for (;;) {
         if (needs_setup()) {
             /* même verrou que sur la console série : un seul assistant à la fois */
-            if (system("flock -n /run/nexus-setup.lock /usr/sbin/nexus-setup --firstboot") != 0)
-                while (needs_setup()) sleep(2);
+            int lock = open("/run/nexus-setup.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+            if (lock >= 0 && flock(lock, LOCK_EX | LOCK_NB) == 0) {
+                /* 1. assistant graphique (3 essais), 2. sinon assistant texte */
+                for (int i = 0; i < 3 && needs_setup() && graphics_ready() &&
+                                access("/usr/local/bin/nexus-assistant", X_OK) == 0; i++)
+                    run_assistant();
+                if (needs_setup() && system("/usr/sbin/nexus-setup --firstboot") != 0) { /* reboucle */ }
+                flock(lock, LOCK_UN);
+            } else {
+                while (needs_setup()) sleep(2);   /* assistant ouvert ailleurs (console série) */
+            }
+            if (lock >= 0) close(lock);
+            continue;
         }
         if (!graphics_ready()) text_login();
         time_t start = time(NULL);

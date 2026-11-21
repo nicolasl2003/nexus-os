@@ -57,6 +57,21 @@ hostname -F /etc/hostname
 # Groupes d'accès au matériel : audio (son), netdev (Wi-Fi), video (écran)
 for g in audio netdev video; do grep -q "^$g:" /etc/group || addgroup -S "$g"; done
 
+# Premier démarrage : installer le bureau embarqué (sans réseau), pour que
+# l'assistant de configuration graphique s'ouvre. Ensuite, ces copies sont
+# effacées de la mémoire.
+PRE=/usr/share/nexus/preinstall
+if [ "$PERSIST" = 1 ] && [ -f "$PRE/LIST" ] && [ ! -x /usr/local/sbin/nexus-login ]; then
+    printf '\n\033[1;36mNexus OS\033[0m : préparation du bureau (premier démarrage, environ une minute)...\n'
+    if NPK_REPO_URL="file://$PRE" npk update >/var/log/nexus-preinstall.log 2>&1 &&
+       NPK_REPO_URL="file://$PRE" npk install $(cat "$PRE/LIST") >>/var/log/nexus-preinstall.log 2>&1; then
+        printf 'Bureau installé.\n'
+    else
+        printf "\033[1;31mÉchec de l'installation du bureau\033[0m (détails : /var/log/nexus-preinstall.log)\n"
+    fi
+fi
+rm -rf "$PRE"
+
 # Pilotes en modules et firmwares (paquet linux-wifi, dans /usr/local)
 mkdir -p /lib
 ln -sfn /usr/local/lib/modules /lib/modules   # (lien valide dès que linux-wifi est installé)

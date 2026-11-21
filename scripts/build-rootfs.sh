@@ -22,6 +22,34 @@ install -m 755 "$MINISIGN" usr/bin/minisign
 mkdir -p etc/npk/keys
 install -m 644 "$NPK_PUB" etc/npk/keys/nexus-npk.pub
 
+# Bureau embarqué : les paquets du bureau (et leurs dépendances) sont copiés
+# dans l'image, avec l'INDEX signé. Au premier démarrage avec disque, rcS les
+# installe sans réseau : l'assistant de configuration graphique peut s'ouvrir
+# tout de suite. (Toujours vérifiés par npk : signature + SHA-256.)
+PREINSTALL="nexus-desktop netsurf"
+rm -rf usr/share/nexus/preinstall
+if [ -f "$REPO_DIR/INDEX" ] && [ -f "$REPO_DIR/INDEX.minisig" ]; then
+    pre=usr/share/nexus/preinstall
+    mkdir -p "$pre"
+    cp "$REPO_DIR/INDEX" "$REPO_DIR/INDEX.minisig" "$pre/"
+    todo="$PREINSTALL"; seen=""
+    while [ -n "$todo" ]; do
+        set -- $todo
+        [ $# -gt 0 ] || break
+        p=$1; shift; todo="$*"
+        case " $seen " in *" $p "*) continue ;; esac
+        seen="$seen $p"
+        line=$(grep "^$p|" "$REPO_DIR/INDEX" | head -n 1)
+        [ -n "$line" ] || { echo "Paquet embarqué absent du dépôt : $p (make packages)" >&2; exit 1; }
+        cp "$REPO_DIR/$(echo "$line" | cut -d'|' -f5)" "$pre/"
+        todo="$todo $(echo "$line" | cut -d'|' -f3)"
+    done
+    echo "$PREINSTALL" > "$pre/LIST"
+    log "Bureau embarqué :$seen ($(du -sh "$pre" | cut -f1))"
+else
+    log "Dépôt absent : pas de bureau embarqué (make packages pour l'ajouter)"
+fi
+
 # Droits : shadow lisible par root seul ; busybox setuid pour que
 # passwd et su fonctionnent pour les utilisateurs (BusyBox abandonne
 # les privilèges pour toutes les autres commandes).

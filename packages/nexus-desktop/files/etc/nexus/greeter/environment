@@ -1,1 +1,1 @@
-XKB_DEFAULT_LAYOUT=fr
+# Écran de connexion : le clavier vient de /etc/keyboard (nexus-login, nexus-keymap)
