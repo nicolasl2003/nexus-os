@@ -51,7 +51,7 @@ else
 fi
 
 # 1. Nom de la machine
-title "1/3  Nom de la machine"
+title "1/4  Nom de la machine"
 current=$(hostname)
 printf "Nom [%s] : " "$current"; read -r name
 name="${name:-$current}"
@@ -63,12 +63,12 @@ echo "$name" > /etc/hostname
 hostname "$name"
 
 # 2. Mot de passe root
-title "2/3  Mot de passe administrateur (root)"
+title "2/4  Mot de passe administrateur (root)"
 ask_password "Mot de passe root"
 echo "root:$PASSWORD" | chpasswd >/dev/null && echo "Mot de passe root enregistré."
 
 # 3. Compte utilisateur
-title "3/3  Ton compte utilisateur"
+title "3/4  Ton compte utilisateur"
 echo "Il est conseillé de travailler avec un compte normal et d'utiliser"
 echo "'su' pour les tâches d'administration. Laisse vide pour passer."
 while :; do
@@ -93,6 +93,41 @@ while :; do
     break
 done
 
-[ -d /data/etc ] && touch /data/etc/.configured
 unset PASSWORD p1 p2
+
+# 4. Bureau graphique (installé depuis le dépôt npk s'il n'est pas déjà là)
+install_desktop() {
+    printf "Connexion au dépôt de paquets"
+    i=0
+    until npk update >/tmp/nexus-setup-npk.log 2>&1; do
+        i=$((i + 1))
+        if [ $i -ge 15 ]; then
+            echo
+            err "Dépôt injoignable (sur le Mac : lance la VM avec « make run-native »)."
+            echo "Tu pourras l'installer plus tard : su -c \"npk update && npk install nexus-desktop\""
+            return 1
+        fi
+        printf "."; sleep 2
+    done
+    echo " OK"
+    echo "Installation du bureau (quelques minutes)..."
+    npk install nexus-desktop || { err "Échec de l'installation du bureau."; return 1; }
+    # Démarre les services fournis (seatd, son...) sans attendre le redémarrage
+    for s in /usr/local/etc/init.d/S[0-9][0-9]*; do
+        [ -x "$s" ] || continue
+        "$s" status >/dev/null 2>&1 || "$s" start >/dev/null 2>&1
+    done
+    echo "Bureau graphique installé."
+}
+
+if [ ! -x /usr/local/sbin/nexus-login ]; then
+    title "4/4  Bureau graphique"
+    printf "Installer le bureau graphique Nexus maintenant ? [O/n] "; read -r rep
+    case "$rep" in
+        [nN]*) echo "Pas de bureau. Plus tard : su -c \"npk update && npk install nexus-desktop\"" ;;
+        *)     install_desktop ;;
+    esac
+fi
+
+[ -d /data/etc ] && touch /data/etc/.configured
 printf "\n%bConfiguration terminée.%b Tu peux maintenant te connecter.\n\n" "$B" "$R"

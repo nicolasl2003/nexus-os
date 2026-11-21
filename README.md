@@ -230,6 +230,15 @@ lancé la commande reste la console série (Ctrl+A puis X pour quitter QEMU).
 
 ## Bureau graphique (Wayland)
 
+**Installation automatique** : au premier démarrage (et donc après un
+`make disk-reset`), l'assistant `nexus-setup` propose en étape 4/4
+d'installer le bureau (réponse par défaut : oui). Il télécharge
+`nexus-desktop` depuis le dépôt (lancer la VM avec `make run-native` pour que
+le dépôt soit servi), démarre `seatd`, puis le premier écran passe directement
+à la connexion graphique.
+
+À la main :
+
 ```sh
 # Dans Nexus OS (en root) :
 npk update && npk install nexus-desktop && service seatd start
