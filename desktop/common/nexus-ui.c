@@ -540,7 +540,7 @@ static const struct app_logo app_logos[] = {
     { "files", "#f0a830" },   { "browser", "#1e88e5" }, { "terminal", "#323844" },
     { "settings", "#6b7385" }, { "monitor", "#2f9e5a" }, { "editor", "#e0782a" },
     { "about", "#7a4fd8" },   { "store", "#d8457a" },   { "viewer", "#00a3c4" },
-    { "calculator", "#3b4cc0" },
+    { "calculator", "#3b4cc0" }, { "screenshot", "#0f9d8a" },
 };
 
 const char *nx_app_icon_for(const char *name)
@@ -558,6 +558,7 @@ const char *nx_app_icon_for(const char *name)
         { "nexus-store", "store" }, { "system-software-install", "store" },
         { "nexus-viewer", "viewer" }, { "image", "viewer" },
         { "nexus-calculator", "calculator" }, { "accessories-calculator", "calculator" },
+        { "nexus-screenshot", "screenshot" }, { "applets-screenshooter", "screenshot" },
     };
     if (!name) return "";
     for (unsigned i = 0; i < sizeof map / sizeof map[0]; i++)
@@ -628,6 +629,15 @@ static void app_glyph(cairo_t *cr, const char *id, nx_color c)
         cairo_move_to(cr, 0.16, 0.76); cairo_line_to(cr, 0.4, 0.46); cairo_line_to(cr, 0.56, 0.64);
         cairo_line_to(cr, 0.68, 0.52); cairo_line_to(cr, 0.84, 0.76); cairo_close_path(cr); cairo_fill(cr);
         cairo_arc(cr, 0.7, 0.34, 0.07, 0, 2 * M_PI); cairo_fill(cr);
+    } else if (!strcmp(id, "screenshot")) {
+        /* coins de cadrage + objectif */
+        double k = 0.2;
+        cairo_move_to(cr, 0.1, 0.1 + k); cairo_line_to(cr, 0.1, 0.1); cairo_line_to(cr, 0.1 + k, 0.1);
+        cairo_move_to(cr, 0.9 - k, 0.1); cairo_line_to(cr, 0.9, 0.1); cairo_line_to(cr, 0.9, 0.1 + k);
+        cairo_move_to(cr, 0.9, 0.9 - k); cairo_line_to(cr, 0.9, 0.9); cairo_line_to(cr, 0.9 - k, 0.9);
+        cairo_move_to(cr, 0.1 + k, 0.9); cairo_line_to(cr, 0.1, 0.9); cairo_line_to(cr, 0.1, 0.9 - k);
+        cairo_stroke(cr);
+        cairo_arc(cr, 0.5, 0.5, 0.17, 0, 2 * M_PI); cairo_fill(cr);
     } else if (!strcmp(id, "calculator")) {
         nx_rounded_rect(cr, 0.16, 0.06, 0.68, 0.88, 0.1); cairo_stroke(cr);
         nx_rounded_rect(cr, 0.28, 0.18, 0.44, 0.16, 0.03); cairo_fill(cr);
@@ -1217,6 +1227,8 @@ static const struct wl_pointer_listener pointer_listener = {
 
 /* ===================== Clavier ===================== */
 
+static uint32_t rep_key;   /* touche maintenue (répétition), voir plus bas */
+
 bool nx_mod_ctrl(void)
 {
     return nx.xkb_state &&
@@ -1262,18 +1274,62 @@ static void k_enter(void *d, struct wl_keyboard *k, uint32_t serial, struct wl_s
 static void k_leave(void *d, struct wl_keyboard *k, uint32_t serial, struct wl_surface *s)
 {
     (void)d; (void)k; (void)serial; (void)s;
+    rep_key = 0;
     nx.keyboard_focus = NULL;
 }
-static void k_key(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t t, uint32_t key, uint32_t state)
+/* Répétition des touches (touche maintenue) : faite par le client sous
+ * Wayland, au rythme annoncé par le compositeur (repeat_info) */
+static uint32_t rep_key;
+static int rep_rate = 25, rep_delay = 600;
+static double rep_next;
+
+static double mono_now(void)
 {
-    (void)d; (void)k; (void)serial; (void)t;
-    if (state != WL_KEYBOARD_KEY_STATE_PRESSED || !nx.xkb_state) return;
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec + t.tv_nsec / 1e9;
+}
+
+static void deliver_key(uint32_t key)
+{
     struct nx_window *w = nx.keyboard_focus;
-    if (!w || !w->h.key) return;
+    if (!w || !w->h.key || !nx.xkb_state) return;
     xkb_keysym_t sym = xkb_state_key_get_one_sym(nx.xkb_state, key + 8);
     char utf8[16] = "";
     xkb_state_key_get_utf8(nx.xkb_state, key + 8, utf8, sizeof utf8);
     w->h.key(w, sym, utf8);
+}
+
+static void k_key(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t t, uint32_t key, uint32_t state)
+{
+    (void)d; (void)k; (void)serial; (void)t;
+    if (state != WL_KEYBOARD_KEY_STATE_PRESSED) {
+        if (key == rep_key) rep_key = 0;
+        return;
+    }
+    if (!nx.xkb_state) return;
+    rep_key = 0;
+    if (rep_rate > 0 && nx.keymap && xkb_keymap_key_repeats(nx.keymap, key + 8)) {
+        rep_key = key;
+        rep_next = mono_now() + rep_delay / 1000.0;
+    }
+    deliver_key(key);
+}
+
+/* ms avant la prochaine répétition (-1 : aucune) ; déclenche celles dues */
+static int repeat_timeout(void)
+{
+    if (!rep_key || !nx.keyboard_focus) return -1;
+    double now = mono_now();
+    int guard = 0;
+    while (rep_key && now >= rep_next && guard++ < 4) {
+        deliver_key(rep_key);
+        rep_next += 1.0 / rep_rate;
+    }
+    if (!rep_key) return -1;
+    if (now >= rep_next) rep_next = now + 1.0 / rep_rate;   /* trop de retard : on ne rattrape pas */
+    int ms = (int)((rep_next - now) * 1000) + 1;
+    return ms < 1 ? 1 : ms;
 }
 static void k_modifiers(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t dep,
                         uint32_t lat, uint32_t lock, uint32_t group)
@@ -1283,7 +1339,9 @@ static void k_modifiers(void *d, struct wl_keyboard *k, uint32_t serial, uint32_
 }
 static void k_repeat(void *d, struct wl_keyboard *k, int32_t rate, int32_t delay)
 {
-    (void)d; (void)k; (void)rate; (void)delay;
+    (void)d; (void)k;
+    rep_rate = rate;
+    rep_delay = delay;
 }
 static const struct wl_keyboard_listener keyboard_listener = {
     .keymap = k_keymap, .enter = k_enter, .leave = k_leave, .key = k_key,
@@ -1503,6 +1561,10 @@ void nx_run(void)
             break;
         }
         int timeout = nx.timeout ? nx.timeout() : -1;
+        /* échéance du programme (tick), distincte de celle des répétitions */
+        double app_deadline = timeout >= 0 ? mono_now() + timeout / 1000.0 : -1;
+        int rt = repeat_timeout();
+        if (rt >= 0 && (timeout < 0 || rt < timeout)) timeout = rt;
         /* Si un dessin attend un tampon libre, on revérifie bientôt */
         for (int i = 0; i < nx.nwindows; i++)
             if (nx.windows[i]->dirty && (timeout < 0 || timeout > 16)) timeout = 16;
@@ -1514,7 +1576,7 @@ void nx_run(void)
         }
         if (wl_display_dispatch_pending(nx.display) < 0) break;   /* compositeur parti */
 
-        if (r == 0 && nx.tick) nx.tick();
+        if (r == 0 && nx.tick && app_deadline >= 0 && mono_now() >= app_deadline - 0.002) nx.tick();
         if (reload_flag) {
             reload_flag = 0;
             nx_config_load(&nx_conf);
@@ -1762,4 +1824,46 @@ cairo_surface_t *nx_load_image(const char *path, int min_dim)
     free(row);
     fclose(f);
     return s;
+}
+
+/* ---- Recherche sans accents ni majuscules : « edit » trouve « Éditeur » ---- */
+
+void nx_fold(const char *in, char *out, size_t n)
+{
+    static const char *from[] = { "à", "â", "ä", "á", "ã", "å", "ç", "é", "è", "ê", "ë", "í", "ì", "î", "ï",
+                                  "ñ", "ó", "ò", "ô", "ö", "õ", "ú", "ù", "û", "ü", "ý", "ÿ", "œ", "æ",
+                                  "À", "Â", "Ä", "Á", "Ç", "É", "È", "Ê", "Ë", "Î", "Ï", "Ô", "Ö", "Ù",
+                                  "Û", "Ü", "Œ", "Æ" };
+    static const char *to[] = { "a", "a", "a", "a", "a", "a", "c", "e", "e", "e", "e", "i", "i", "i", "i",
+                                "n", "o", "o", "o", "o", "o", "u", "u", "u", "u", "y", "y", "oe", "ae",
+                                "a", "a", "a", "a", "c", "e", "e", "e", "e", "i", "i", "o", "o", "u",
+                                "u", "u", "oe", "ae" };
+    size_t o = 0;
+    while (*in && o + 3 < n) {
+        bool done = false;
+        if ((unsigned char)*in >= 0x80) {
+            for (unsigned i = 0; i < sizeof from / sizeof from[0]; i++) {
+                size_t l = strlen(from[i]);
+                if (!strncmp(in, from[i], l)) {
+                    for (const char *t = to[i]; *t && o + 1 < n; t++) out[o++] = *t;
+                    in += l;
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if (!done) {
+            char c = *in++;
+            out[o++] = (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c;
+        }
+    }
+    out[o] = 0;
+}
+
+bool nx_match(const char *haystack, const char *needle)
+{
+    char h[1024], nd[256];
+    nx_fold(haystack ? haystack : "", h, sizeof h);
+    nx_fold(needle ? needle : "", nd, sizeof nd);
+    return strstr(h, nd) != NULL;
 }

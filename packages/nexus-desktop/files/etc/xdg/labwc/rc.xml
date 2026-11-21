@@ -43,6 +43,10 @@
     <keybind key="C-A-t"><action name="Execute" command="foot" /></keybind>
     <!-- Touche Super (Windows) : ouvrir/fermer le menu Démarrer -->
     <keybind key="Super_L" onRelease="yes"><action name="Execute" command="nexus-menu" /></keybind>
+    <!-- Impr écran : capture de l'écran (enregistrée dans Images) -->
+    <keybind key="Print"><action name="Execute" command="nexus-screenshot" /></keybind>
+    <!-- Ctrl+Maj+Échap : moniteur système -->
+    <keybind key="C-S-Escape"><action name="Execute" command="nexus-monitor" /></keybind>
     <!-- Alt+F4 : fermer la fenêtre -->
     <keybind key="A-F4"><action name="Close" /></keybind>
   </keyboard>

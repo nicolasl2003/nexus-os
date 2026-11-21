@@ -206,6 +206,10 @@ void nx_instance_done(void);
  * peut être décodé en plus petit tant que ses côtés restent >= min_dim. */
 cairo_surface_t *nx_load_image(const char *path, int min_dim);
 
+/* Recherche insensible aux majuscules et aux accents (« edit » ~ « Éditeur ») */
+void nx_fold(const char *in, char *out, size_t n);
+bool nx_match(const char *haystack, const char *needle);
+
 /* Lance une commande en arrière-plan, détachée (sh -c) */
 void nx_spawn(const char *cmd);
 /* Signale aux programmes du bureau que la configuration a changé */

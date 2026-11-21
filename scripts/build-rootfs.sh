@@ -12,6 +12,8 @@ chmod 1777 tmp
 
 # Fichiers propres à Nexus OS (init, motd, os-release...)
 cp -a "$ROOT_DIR/rootfs/." "$ROOTFS_DIR/"
+# Dossiers habituels de chaque nouveau compte (copiés depuis /etc/skel)
+mkdir -p etc/skel/Documents etc/skel/Images "etc/skel/Téléchargements"
 sed -i "s/@VERSION@/$NEXUS_VERSION/g" etc/os-release etc/motd
 
 # Vérification des paquets : minisign + clé publique du dépôt (dans le

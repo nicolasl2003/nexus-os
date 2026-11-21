@@ -630,3 +630,31 @@ Programmes : `desktop/shell/assistant.c` (`nexus-assistant`), lancé par
 l'affichage graphique ne marche pas, l'assistant en mode texte
 (`nexus-setup`) prend le relais ; sur la console série il reste disponible
 (un seul assistant à la fois, verrou `/run/nexus-setup.lock`).
+
+## Nexus 0.11 : les applications du quotidien
+
+Toutes dans le menu Démarrer (recherche sans accents : « edit » trouve
+« Éditeur de texte ») :
+
+- **Éditeur de texte** (`nexus-editor [fichier]`, `desktop/shell/editor.c`) :
+  barre d'outils Nouveau / Ouvrir / Enregistrer / Enregistrer sous /
+  Rechercher, numéros de ligne, police à chasse fixe, sélection (Maj+flèches,
+  souris, double-clic = mot), Ctrl+C/X/V, Ctrl+Z / Ctrl+Y, Ctrl+F, zoom
+  (Ctrl+molette, Ctrl+= / Ctrl+-), indentation conservée, alerte avant de
+  perdre des modifications. Fichiers : double-clic sur un texte l'ouvre ici.
+- **Calculatrice** (`nexus-calculator`, `calc.c`) : priorités (2 + 3 × 4 =
+  14), parenthèses, %, √, x², ±, virgule décimale, historique cliquable,
+  clavier et pavé numérique.
+- **Moniteur système** (`nexus-monitor`, `monitor.c`, aussi **Ctrl+Maj+Échap**) :
+  processeur (courbe d'une minute), mémoire, disque, programmes en cours avec
+  noms lisibles (« Calculatrice — nexus-calculator »), tri par colonne,
+  **Arrêter le programme** (confirmation, puis « Forcer l'arrêt » s'il ne
+  répond pas ; un compte n'arrête que ses propres programmes).
+- **Capture d'écran** (`nexus-screenshot`, `screenshot.c`) : touche **Impr
+  écran** → PNG dans `~/Images` (« Capture 2026-11-22 10-15-32.png ») et
+  notification ; un clic l'ouvre dans la visionneuse. Protocole
+  wlr-screencopy de labwc. `nexus-screenshot --delai 5` pour attendre.
+
+Aussi : répétition des touches maintenues dans toutes nos applications
+(rythme donné par le compositeur), et les nouveaux comptes reçoivent
+Documents, Images et Téléchargements (`/etc/skel`).

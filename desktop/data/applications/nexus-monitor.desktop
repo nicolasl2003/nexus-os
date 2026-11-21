@@ -1,7 +1,6 @@
 [Desktop Entry]
 Type=Application
 Name=Moniteur système
-Comment=Processus, processeur et mémoire
-Exec=foot --app-id=nexus-monitor --title="Moniteur système" htop
-TryExec=htop
+Comment=Processeur, mémoire, disque et programmes en cours
+Exec=nexus-monitor
 Icon=utilities-system-monitor

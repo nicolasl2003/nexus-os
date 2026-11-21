@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Calculatrice
+Comment=Calculs simples, pourcentages, racine carrée
+Exec=nexus-calculator
+Icon=accessories-calculator

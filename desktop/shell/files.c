@@ -513,12 +513,7 @@ static void open_entry(int i)
     if (is_image(ents[i].name)) {
         snprintf(cmd, sizeof cmd, "nexus-files --view %s", q);
     } else if (looks_text(p)) {
-        if (access("/usr/local/bin/nano", X_OK) != 0) {
-            set_status("Installe un éditeur pour ouvrir les textes : npk install nano");
-            nx_redraw(win);
-            return;
-        }
-        snprintf(cmd, sizeof cmd, "foot --app-id=nexus-editor --title='Éditeur de texte' nano %s", q);
+        snprintf(cmd, sizeof cmd, "nexus-editor %s", q);
     } else {
         set_status("Nexus OS ne sait pas encore ouvrir ce type de fichier.");
         nx_redraw(win);

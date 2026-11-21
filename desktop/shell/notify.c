@@ -333,7 +333,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
         nx_set(cr, accent);
         cairo_fill(cr);
         static const char *apps[] = { "files", "browser", "terminal", "settings", "monitor", "editor",
-                                      "about", "store", "viewer", "calculator" };
+                                      "about", "store", "viewer", "calculator", "screenshot" };
         bool app = false;
         for (unsigned k = 0; k < sizeof apps / sizeof apps[0]; k++) app |= !strcmp(shown[i].icon, apps[k]);
         if (app) {

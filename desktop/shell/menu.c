@@ -208,7 +208,7 @@ static void search_files(const char *dir, int depth)
         if (e->d_name[0] == '.') continue;
         char p[1024];
         snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
-        if (strcasestr(e->d_name, search)) {
+        if (nx_match(e->d_name, search)) {
             results[nresults].is_app = false;
             snprintf(results[nresults].path, sizeof results[nresults].path, "%s", p);
             nresults++;
@@ -234,7 +234,7 @@ static void refilter(void)
     scroll = 0;
     if (!search[0]) return;
     for (int i = 0; i < napps && nresults < 12; i++)
-        if (strcasestr(apps[i].name, search) || strcasestr(apps[i].comment, search)) {
+        if (nx_match(apps[i].name, search) || nx_match(apps[i].comment, search)) {
             results[nresults].is_app = true;
             results[nresults].app = i;
             nresults++;
