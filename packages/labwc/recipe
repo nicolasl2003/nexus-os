@@ -1,0 +1,13 @@
+NAME=labwc
+VERSION=0.8.2
+REL=4
+DEPENDS="seatd xkeyboard-config fonts-dejavu"
+DESC="Compositeur Wayland : affiche et gère les fenêtres du bureau"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    gui_bin labwc
+    # Réglages par appareil de libinput (pavés tactiles, souris...)
+    gui_copy share/libinput
+}

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Comment=Ligne de commande
+Exec=foot
+Icon=utilities-terminal

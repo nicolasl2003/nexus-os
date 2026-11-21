@@ -1,0 +1,8 @@
+NAME=nexusfetch
+VERSION=1.0
+DEPENDS=""
+DESC="Affiche les infos du système avec le logo Nexus OS"
+
+build() {
+    install -Dm755 "$RECIPE_DIR/nexusfetch" "$DESTDIR$PREFIX/bin/nexusfetch"
+}

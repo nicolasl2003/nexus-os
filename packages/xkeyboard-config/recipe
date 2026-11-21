@@ -1,0 +1,11 @@
+NAME=xkeyboard-config
+VERSION=2.43
+REL=2
+DEPENDS=""
+DESC="Dispositions de clavier (AZERTY, QWERTY...) et touches mortes pour le mode graphique"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    gui_copy share/X11/xkb share/X11/locale
+}

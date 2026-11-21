@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=À propos de Nexus OS
+Comment=Informations sur le système
+Exec=nexus-settings --about
+Icon=help-about

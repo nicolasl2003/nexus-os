@@ -1,0 +1,22 @@
+#!/bin/sh
+# Service : seatd. Les membres du groupe 'video' peuvent lancer le bureau.
+PIDFILE=/run/seatd.pid
+running() { [ -f "$PIDFILE" ] && [ -d "/proc/$(cat "$PIDFILE")" ]; }
+
+case "$1" in
+    start)
+        running && { echo "seatd : déjà actif"; exit 0; }
+        grep -q '^video:' /etc/group || addgroup -S video
+        start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/local/bin/seatd -- -g video -l error &&
+            echo "seatd : démarré (accès au bureau pour le groupe 'video')"
+        ;;
+    stop)
+        running && start-stop-daemon -K -p "$PIDFILE" >/dev/null && echo "seatd : arrêté"
+        rm -f "$PIDFILE" /run/seatd.sock
+        ;;
+    status)
+        if running; then echo "seatd : actif (pid $(cat "$PIDFILE"))"; exit 0
+        else echo "seatd : arrêté"; exit 1; fi
+        ;;
+    *) echo "Usage : $0 start|stop|status"; exit 1 ;;
+esac

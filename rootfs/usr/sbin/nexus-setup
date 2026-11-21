@@ -1,0 +1,98 @@
+#!/bin/sh
+# nexus-setup — assistant de configuration de Nexus OS
+# Lancé automatiquement au premier démarrage avec un disque NEXUS_DATA,
+# relançable ensuite par root : nexus-setup
+
+C='\033[1;36m'; B='\033[1m'; E='\033[1;31m'; R='\033[0m'
+
+[ "$(id -u)" = 0 ] || { echo "nexus-setup doit être lancé en root (utilise : su -c nexus-setup)"; exit 1; }
+
+title() { printf "\n%b== %s ==%b\n" "$C" "$1" "$R"; }
+err()   { printf "%b%s%b\n" "$E" "$1" "$R"; }
+
+# ask_password <invite> -> $PASSWORD (saisie masquée, demandée deux fois)
+ask_password() {
+    while :; do
+        printf "%s : " "$1"; read -rs p1; echo
+        printf "Confirme : ";    read -rs p2; echo
+        if [ -z "$p1" ]; then
+            err "Le mot de passe ne peut pas être vide."
+        elif [ ${#p1} -lt 4 ]; then
+            err "Trop court (4 caractères minimum)."
+        elif [ "$p1" != "$p2" ]; then
+            err "Les deux saisies ne correspondent pas."
+        else
+            PASSWORD="$p1"; return 0
+        fi
+    done
+}
+
+valid_username() {
+    case "$1" in
+        ""|*[!a-z0-9_-]*|[!a-z_]*) return 1 ;;
+    esac
+    [ ${#1} -le 32 ]
+}
+
+clear 2>/dev/null
+printf "%b" "$C"
+cat <<'EOF'
+    _   __                        ____  _____
+   / | / /__  _  ____  _______   / __ \/ ___/
+  /  |/ / _ \| |/_/ / / / ___/  / / / /\__ \
+ / /|  /  __/>  </ /_/ (__  )  / /_/ /___/ /
+/_/ |_/\___/_/|_|\__,_/____/   \____//____/
+EOF
+printf "%b\n" "$R"
+if [ "${1:-}" = "--firstboot" ]; then
+    printf "%bBienvenue ! Configurons Nexus OS (premier démarrage).%b\n" "$B" "$R"
+else
+    printf "%bReconfiguration de Nexus OS.%b\n" "$B" "$R"
+fi
+
+# 1. Nom de la machine
+title "1/3  Nom de la machine"
+current=$(hostname)
+printf "Nom [%s] : " "$current"; read -r name
+name="${name:-$current}"
+case "$name" in
+    *[!a-zA-Z0-9-]*|-*) err "Nom invalide, on garde '$current'."; name="$current" ;;
+esac
+echo "$name" > /etc/hostname
+[ -d /data ] && echo "$name" > /data/hostname
+hostname "$name"
+
+# 2. Mot de passe root
+title "2/3  Mot de passe administrateur (root)"
+ask_password "Mot de passe root"
+echo "root:$PASSWORD" | chpasswd >/dev/null && echo "Mot de passe root enregistré."
+
+# 3. Compte utilisateur
+title "3/3  Ton compte utilisateur"
+echo "Il est conseillé de travailler avec un compte normal et d'utiliser"
+echo "'su' pour les tâches d'administration. Laisse vide pour passer."
+while :; do
+    printf "Nom d'utilisateur : "; read -r user
+    [ -z "$user" ] && { echo "Pas de compte créé."; break; }
+    if ! valid_username "$user"; then
+        err "Nom invalide : minuscules, chiffres, - et _ ; commence par une lettre."
+        continue
+    fi
+    if id "$user" >/dev/null 2>&1; then
+        echo "Le compte $user existe déjà : on change seulement son mot de passe."
+    else
+        adduser -D -s /bin/sh -h "/home/$user" "$user" || { err "Échec de la création."; continue; }
+        cp -a /etc/skel/. "/home/$user/" 2>/dev/null
+        chown -R "$user:$user" "/home/$user"
+    fi
+    # Groupe 'video' : droit d'ouvrir le bureau graphique
+    grep -q '^video:' /etc/group || addgroup -S video
+    addgroup "$user" video 2>/dev/null
+    ask_password "Mot de passe de $user"
+    echo "$user:$PASSWORD" | chpasswd >/dev/null && echo "Compte $user prêt."
+    break
+done
+
+[ -d /data/etc ] && touch /data/etc/.configured
+unset PASSWORD p1 p2
+printf "\n%bConfiguration terminée.%b Tu peux maintenant te connecter.\n\n" "$B" "$R"

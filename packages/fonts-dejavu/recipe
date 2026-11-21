@@ -1,0 +1,10 @@
+NAME=fonts-dejavu
+VERSION=2.37
+DEPENDS=""
+DESC="Polices DejaVu (interface et terminal) + configuration fontconfig"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    gui_copy share/fonts/dejavu etc/fonts
+}

@@ -1,0 +1,13 @@
+# /etc/inittab — BusyBox init de Nexus OS
+::sysinit:/etc/init.d/rcS
+
+# Écrans de connexion : port série (QEMU -nographic) et écrans du PC.
+# nexus-getty lance l'assistant au premier démarrage, puis getty/login.
+ttyS0::respawn:/usr/sbin/nexus-getty ttyS0 115200 xterm
+tty1::respawn:/usr/sbin/nexus-tty1
+tty2::respawn:/usr/sbin/nexus-getty tty2 38400 linux
+
+::ctrlaltdel:/sbin/reboot
+::shutdown:/etc/init.d/rcK
+::shutdown:/bin/sync
+::shutdown:/bin/umount -a -r

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Éditeur de texte
+Comment=Écrire et modifier des fichiers texte
+Exec=foot --app-id=nexus-editor --title="Éditeur de texte" nano
+TryExec=nano
+Icon=accessories-text-editor

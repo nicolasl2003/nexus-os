@@ -1,0 +1,67 @@
+# Options ajoutées par-dessus x86_64_defconfig
+CONFIG_LOCALVERSION="-nexus"
+CONFIG_DEFAULT_HOSTNAME="nexus"
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_NET=y
+CONFIG_VIRTIO_BLK=y
+
+# --- Affichage graphique ---
+# Pilotes d'écran : virtio-gpu (QEMU), bochs (QEMU -vga std), simpledrm
+# (framebuffer fourni par le BIOS/UEFI : marche sur la plupart des vrais PC)
+CONFIG_DRM=y
+CONFIG_DRM_VIRTIO_GPU=y
+CONFIG_DRM_BOCHS=y
+CONFIG_DRM_SIMPLEDRM=y
+CONFIG_SYSFB_SIMPLEFB=y
+# Console texte sur l'écran graphique (fbcon)
+CONFIG_FB=y
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
+# Logo de démarrage (remplacé par celui de Nexus OS, voir config/logo/)
+CONFIG_LOGO=y
+CONFIG_LOGO_LINUX_CLUT224=y
+# CONFIG_LOGO_LINUX_MONO is not set
+# CONFIG_LOGO_LINUX_VGA16 is not set
+# Clavier/souris (virtio dans QEMU) exposés via /dev/input/event* (evdev)
+CONFIG_VIRTIO_INPUT=y
+CONFIG_INPUT_EVDEV=y
+# Décompresseur du noyau silencieux (sinon il écrit ses adresses à l'écran)
+# CONFIG_X86_VERBOSE_BOOTUP is not set
+
+# --- Son ---
+# Codecs des cartes son courantes (puces Realtek, HDMI des cartes graphiques,
+# Conexant, IDT) + cartes son USB. QEMU : intel-hda + codec générique.
+CONFIG_SND_HDA_GENERIC=y
+CONFIG_SND_HDA_CODEC_REALTEK=y
+CONFIG_SND_HDA_CODEC_HDMI=y
+CONFIG_SND_HDA_CODEC_CONEXANT=y
+CONFIG_SND_HDA_CODEC_SIGMATEL=y
+CONFIG_SND_USB_AUDIO=y
+
+# --- Wi-Fi ---
+# Pilotes en modules (chargés à la demande, livrés avec leurs firmwares dans
+# le paquet linux-wifi) : Intel, MediaTek, Realtek, Atheros.
+CONFIG_IWLWIFI=m
+CONFIG_IWLMVM=m
+CONFIG_IWLDVM=m
+CONFIG_MT7921E=m
+CONFIG_MT7921U=m
+CONFIG_RTW88=m
+CONFIG_RTW88_8822CE=m
+CONFIG_RTW88_8821CE=m
+CONFIG_RTW88_8822BE=m
+CONFIG_ATH9K=m
+CONFIG_ATH9K_HTC=m
+# Radios Wi-Fi simulées, pour tester sans matériel
+CONFIG_MAC80211_HWSIM=m
+
+# Espaces de noms utilisateur : bac à sable (sandbox) de Firefox et autres navigateurs
+CONFIG_USER_NS=y

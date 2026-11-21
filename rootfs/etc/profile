@@ -1,0 +1,20 @@
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+export HOME="${HOME:-/root}"
+umask 022
+
+# Invite : rouge pour root, cyan pour les utilisateurs
+if [ "$(id -u)" = 0 ]; then
+    export PS1='\[\e[1;31m\]\u@\h\[\e[0m\]:\w# '
+else
+    export PS1='\[\e[1;36m\]\u@\h\[\e[0m\]:\w\$ '
+fi
+
+alias ll='ls -lh'
+
+# Bureau graphique automatique quand on se connecte sur le premier écran du PC
+# (tty1). Les autres consoles (Ctrl+Alt+F2...) restent en mode texte.
+if [ "$(tty)" = /dev/tty1 ] && [ -z "$WAYLAND_DISPLAY" ] && [ -z "$NEXUS_SESSION" ] && \
+   [ -x /usr/local/bin/nexus-desktop ] && [ -e /dev/dri/card0 ]; then
+    echo "Ouverture du bureau Nexus... (Ctrl+Alt+F2 : console texte)"
+    nexus-desktop
+fi

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Appelé par le noyau à chaque branchement de matériel (uevent) :
+# charge le pilote correspondant (clé Wi-Fi, carte son USB...) et donne
+# l'accès aux nouveaux périphériques audio au groupe 'audio'.
+[ "$ACTION" = add ] || exit 0
+[ -n "$MODALIAS" ] && modprobe -q "$MODALIAS" 2>/dev/null
+case "$DEVNAME" in
+    snd/*) chgrp audio "/dev/$DEVNAME" 2>/dev/null; chmod 660 "/dev/$DEVNAME" 2>/dev/null ;;
+esac
+exit 0

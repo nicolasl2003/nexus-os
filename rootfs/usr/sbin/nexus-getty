@@ -1,0 +1,23 @@
+#!/bin/sh
+# nexus-getty <tty> <vitesse> <TERM>
+# Lancé par init sur chaque terminal. Au premier démarrage avec disque,
+# propose l'assistant nexus-setup ; ensuite, affiche l'écran de connexion.
+tty="$1"; baud="$2"; term="$3"
+export TERM="$term"
+
+needs_setup() { [ -d /data/etc ] && [ ! -f /data/etc/.configured ]; }
+
+if needs_setup; then
+    printf '\n\033[1mNexus OS — premier démarrage.\033[0m Appuie sur Entrée pour le configurer... '
+    read -r _
+    if needs_setup; then
+        # Un seul terminal à la fois peut lancer l'assistant
+        flock -n /run/nexus-setup.lock /usr/sbin/nexus-setup --firstboot ||
+            { echo "Configuration déjà en cours sur un autre écran."; sleep 5; exit 0; }
+    fi
+fi
+
+case "$tty" in
+    ttyS*) exec /sbin/getty -L "$baud" "$tty" "$term" ;;
+    *)     exec /sbin/getty "$baud" "$tty" "$term" ;;
+esac

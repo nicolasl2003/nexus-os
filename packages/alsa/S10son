@@ -1,0 +1,22 @@
+#!/bin/sh
+# Service : son. Au démarrage, ALSA laisse le volume à zéro et coupé :
+# on restaure le dernier volume (80 % la première fois) ; il est mémorisé
+# à l'extinction.
+SAVE=/usr/local/var/lib/son/volume
+case "$1" in
+    start)
+        [ -e /dev/snd/controlC0 ] || { echo "son : aucune carte son"; exit 0; }
+        vol=$(cat "$SAVE" 2>/dev/null)
+        amixer -q sset Master "${vol:-80}%" unmute 2>/dev/null || amixer -q sset PCM "${vol:-80}%" unmute 2>/dev/null
+        echo "son : prêt (volume ${vol:-80} %)"
+        ;;
+    stop)
+        mkdir -p "$(dirname "$SAVE")"
+        amixer get Master 2>/dev/null | sed -n 's/.*\[\([0-9]*\)%\].*/\1/p' | head -n 1 > "$SAVE"
+        ;;
+    status)
+        [ -e /dev/snd/controlC0 ] && { amixer get Master 2>/dev/null | tail -n 1; exit 0; }
+        echo "son : aucune carte son"; exit 1
+        ;;
+    *) echo "Usage : $0 start|stop|status"; exit 1 ;;
+esac

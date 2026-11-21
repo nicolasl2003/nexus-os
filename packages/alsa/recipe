@@ -1,0 +1,13 @@
+NAME=alsa
+VERSION=1.2.13
+REL=1
+DEPENDS=""
+DESC="Son : bibliothèque ALSA, aplay (jouer un son) et amixer (volume)"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    gui_bin aplay amixer
+    gui_copy share/alsa
+    install -Dm755 "$RECIPE_DIR/S10son" "$DESTDIR$PREFIX/etc/init.d/S10son"
+}

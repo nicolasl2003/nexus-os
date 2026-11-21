@@ -1,0 +1,15 @@
+#!/bin/sh
+# Lance le navigateur web (NetSurf) dans une fenêtre du bureau Nexus.
+#   nexus-browser [adresse]
+[ -n "$WAYLAND_DISPLAY" ] || { echo "nexus-browser : à lancer depuis le bureau" >&2; exit 1; }
+conf="$HOME/.netsurf"
+mkdir -p "$conf"
+# Réglages de départ (modifiables ensuite) : page d'accueil, langue, certificats
+if [ ! -f "$conf/Choices" ]; then
+    cat > "$conf/Choices" <<'CHOICES'
+homepage_url:https://lite.duckduckgo.com/lite/
+accept_language:fr
+ca_bundle:/usr/local/etc/ssl/certs/ca-certificates.crt
+CHOICES
+fi
+exec /usr/local/bin/netsurf-fb -f wl -w 1180 -h 720 "$@"

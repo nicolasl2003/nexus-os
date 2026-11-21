@@ -1,0 +1,18 @@
+NAME=alpine
+VERSION=1.0
+DEPENDS="curl openssl ca-certificates"
+DESC="npk alpine : installer les ~30 000 logiciels d'Alpine Linux (signatures vérifiées)"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    cp -a "$RECIPE_DIR/files/." "$DESTDIR$PREFIX/"
+    chmod 755 "$DESTDIR$PREFIX/bin/npk-alpine" "$DESTDIR$PREFIX/sbin/nexus-alpine-link" \
+              "$DESTDIR$PREFIX/etc/init.d/S05alpine"
+    # Découpeur de paquets .apk (compilé par 'make desktop-apps')
+    apps="$BUILD_DIR/gui/nexus-apps/bin"
+    [ -x "$apps/apk-split" ] || { echo "apk-split absent : lance 'make desktop-apps'" >&2; exit 1; }
+    install -m 755 "$apps/apk-split" "$DESTDIR$PREFIX/bin/apk-split"
+    # Clés publiques d'Alpine (étape alpine_keys de 'make gui-stack')
+    gui_copy share/npk/alpine-keys
+}

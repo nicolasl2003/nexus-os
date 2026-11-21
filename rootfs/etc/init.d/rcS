@@ -1,0 +1,97 @@
+#!/bin/sh
+# Script de démarrage de Nexus OS
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts && mount -t devpts devpts /dev/pts
+# Mémoire partagée (shm_open) : utilisée par le bureau graphique (Wayland)
+mkdir -p /dev/shm && mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm
+mount -t tmpfs    tmpfs    /run
+# Dossiers de session des utilisateurs (XDG_RUNTIME_DIR), créés à la demande
+mkdir -p -m 1777 /run/user
+# Note : /dev est rempli par le noyau (devtmpfs) avec les bons droits
+# (/dev/null en 666...). Ne pas lancer 'mdev -s' sans /etc/mdev.conf :
+# il recréerait tout en 660 et casserait les comptes non-root.
+
+# Persistance : si un disque étiqueté NEXUS_DATA existe, on le monte sur
+# /data et on y redirige /root, /home, /usr/local et les comptes.
+# Sinon on est en "mode live" : tout reste en mémoire.
+PERSIST=0
+if DATA_DEV=$(findfs LABEL=NEXUS_DATA 2>/dev/null); then
+    mkdir -p /data
+    if mount -t ext4 "$DATA_DEV" /data; then
+        PERSIST=1
+        for dir in root home; do
+            if [ ! -d "/data/$dir" ]; then
+                # Premier démarrage : on recopie le contenu initial
+                cp -a "/$dir" "/data/$dir"
+            fi
+            mount --bind "/data/$dir" "/$dir"
+        done
+        chmod 700 /root
+
+        # Les paquets npk vivent dans /usr/local
+        mkdir -p /data/local
+        mount --bind /data/local /usr/local
+
+        # Comptes utilisateurs : /etc/passwd, shadow et group sont des liens
+        # vers /data/etc (passwd, adduser... suivent les liens en écrivant).
+        mkdir -p /data/etc
+        for f in passwd shadow group; do
+            [ -f "/data/etc/$f" ] || cp -a "/etc/$f" "/data/etc/$f"
+            rm -f "/etc/$f"
+            ln -s "/data/etc/$f" "/etc/$f"
+        done
+        chmod 600 /data/etc/shadow
+
+        # Nom d'hôte personnalisable de façon persistante
+        [ -f /data/hostname ] && cp /data/hostname /etc/hostname
+    fi
+fi
+
+hostname -F /etc/hostname
+
+# Groupes d'accès au matériel : audio (son), netdev (Wi-Fi), video (écran)
+for g in audio netdev video; do grep -q "^$g:" /etc/group || addgroup -S "$g"; done
+
+# Pilotes en modules et firmwares (paquet linux-wifi, dans /usr/local)
+mkdir -p /lib
+ln -sfn /usr/local/lib/modules /lib/modules   # (lien valide dès que linux-wifi est installé)
+echo /usr/local/lib/firmware > /sys/module/firmware_class/parameters/path 2>/dev/null
+# Matériel branché plus tard (clé Wi-Fi, carte son USB) : pilote chargé à la volée
+echo /usr/sbin/nexus-hotplug > /proc/sys/kernel/hotplug
+# Matériel déjà présent : charger les pilotes correspondants ("coldplug")
+if [ -d "/lib/modules/$(uname -r)" ]; then
+    find /sys/devices -name modalias -exec cat {} + 2>/dev/null | sort -u | \
+        xargs -r -n 30 modprobe -qa 2>/dev/null
+fi
+# Son : périphériques audio accessibles au groupe 'audio'
+chgrp -R audio /dev/snd 2>/dev/null
+chmod 660 /dev/snd/* 2>/dev/null
+
+# Réseau : loopback + DHCP sur eth0 (fourni par QEMU)
+ip link set lo up
+if ip link show eth0 >/dev/null 2>&1; then
+    ip link set eth0 up
+    udhcpc -i eth0 -q -n -s /usr/share/udhcpc/default.script >/dev/null 2>&1 &
+fi
+
+# Journal système (/var/log/messages, lisible avec : logread ou cat)
+syslogd -O /var/log/messages -s 512
+
+# Services installés par les paquets (/usr/local/etc/init.d/S*)
+/usr/sbin/service --boot-start
+
+# Écran de connexion (/etc/issue, affiché par getty avant "login:")
+. /etc/os-release
+{
+    echo
+    echo "$PRETTY_NAME — \\n (\\l)"
+    if [ "$PERSIST" = 1 ]; then
+        echo "Persistance : $DATA_DEV monté sur /data"
+    else
+        echo "Mode live (aucun disque NEXUS_DATA) : rien n'est sauvegardé."
+        echo "Connecte-toi en 'root', sans mot de passe."
+    fi
+    echo
+} > /etc/issue

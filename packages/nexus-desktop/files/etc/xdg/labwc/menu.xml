@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Menu du clic droit sur le bureau -->
+<openbox_menu>
+  <menu id="root-menu" label="Nexus OS">
+    <item label="Terminal"><action name="Execute" command="foot" /></item>
+    <item label="Changer le fond d'écran…"><action name="Execute" command="nexus-settings --wallpaper" /></item>
+    <item label="Paramètres"><action name="Execute" command="nexus-settings" /></item>
+    <separator />
+    <item label="Se déconnecter"><action name="Exit" /></item>
+  </menu>
+</openbox_menu>

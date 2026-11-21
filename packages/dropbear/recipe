@@ -1,0 +1,37 @@
+NAME=dropbear
+VERSION=2025.88
+REL=1
+DEPENDS=""
+DESC="Serveur et client SSH légers (ssh, scp) + service sshd"
+
+build() {
+    rm -rf "$WORK/dropbear-$VERSION"
+    tar -xf "$(fetch "https://matt.ucc.asn.au/dropbear/releases/dropbear-$VERSION.tar.bz2")" -C "$WORK"
+    cd "$WORK/dropbear-$VERSION"
+
+    # scp doit trouver le client ssh dans /usr/local, et les sessions SSH
+    # doivent voir les programmes installés par npk
+    cat > localoptions.h <<EOF
+#define DROPBEAR_PATH_SSH_PROGRAM "$PREFIX/bin/dbclient"
+#define DEFAULT_PATH "/bin:/sbin:/usr/bin:/usr/sbin:$PREFIX/bin"
+#define DEFAULT_ROOT_PATH "/bin:/sbin:/usr/bin:/usr/sbin:$PREFIX/bin:$PREFIX/sbin"
+EOF
+
+    CC="$MUSL_CC" \
+        ./configure --prefix="$PREFIX" --enable-static --disable-zlib --disable-pam \
+            --disable-lastlog --disable-utmp --disable-utmpx --disable-wtmp \
+            --disable-wtmpx --disable-pututline --disable-pututxline >/dev/null
+    # Un seul binaire "multi" qui se comporte selon le nom sous lequel on l'appelle
+    make -j"$JOBS" PROGRAMS="dropbear dbclient dropbearkey scp" MULTI=1 >/dev/null
+    strip dropbearmulti
+
+    b="$DESTDIR$PREFIX/bin"
+    install -Dm755 dropbearmulti "$b/dropbearmulti"
+    for prog in dbclient ssh scp dropbearkey; do
+        ln -s dropbearmulti "$b/$prog"
+    done
+    mkdir -p "$DESTDIR$PREFIX/sbin"
+    ln -s ../bin/dropbearmulti "$DESTDIR$PREFIX/sbin/dropbear"
+
+    install -Dm755 "$RECIPE_DIR/S50dropbear" "$DESTDIR$PREFIX/etc/init.d/S50dropbear"
+}

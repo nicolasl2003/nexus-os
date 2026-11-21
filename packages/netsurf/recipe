@@ -1,0 +1,15 @@
+NAME=netsurf
+VERSION=3.11
+DEPENDS="fonts-dejavu ca-certificates"
+DESC="Navigateur web léger (NetSurf) dans une fenêtre du bureau"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    # NetSurf compilé par 'make gui-stack' avec notre sortie Wayland
+    gui_bin netsurf-fb
+    gui_copy share/netsurf
+    # Lanceur + entrée du menu Démarrer
+    cp -a "$RECIPE_DIR/files/." "$DESTDIR$PREFIX/"
+    chmod 755 "$DESTDIR$PREFIX/bin/nexus-browser"
+}

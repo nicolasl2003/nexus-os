@@ -1,0 +1,6 @@
+# Programmes lancés à l'ouverture du bureau Nexus
+nexus-wallpaper &
+nexus-panel &
+nexus-widgets &
+# Petit carillon d'ouverture de session
+[ -x /usr/local/bin/aplay ] && aplay -q /usr/local/share/sounds/nexus/connexion.wav &

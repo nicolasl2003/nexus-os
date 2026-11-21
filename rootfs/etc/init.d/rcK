@@ -1,0 +1,3 @@
+#!/bin/sh
+# Arrêt de Nexus OS : on stoppe proprement les services (ordre inverse)
+/usr/sbin/service --boot-stop

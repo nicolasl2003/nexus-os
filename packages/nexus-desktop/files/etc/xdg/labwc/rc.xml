@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<!-- Configuration du bureau Nexus (compositeur labwc) -->
+<labwc_config>
+  <core>
+    <decoration>server</decoration>
+    <gap>6</gap>
+  </core>
+
+  <theme>
+    <name>Nexus</name>
+    <cornerRadius>8</cornerRadius>
+    <font place="ActiveWindow"><name>DejaVu Sans</name><size>10</size><weight>bold</weight></font>
+    <font place="InactiveWindow"><name>DejaVu Sans</name><size>10</size></font>
+    <font place="MenuItem"><name>DejaVu Sans</name><size>10</size></font>
+    <font place="OnScreenDisplay"><name>DejaVu Sans</name><size>11</size></font>
+  </theme>
+
+  <placement><policy>cascade</policy></placement>
+
+  <!-- Aimantation : glisser une fenêtre contre un bord ou dans un coin.
+       Haut (centre) = plein écran ; gauche/droite = moitié d'écran ;
+       coins = quart d'écran (régions nexus-*, gérées par notre labwc). -->
+  <snapping>
+    <range>12</range>
+    <topMaximize>yes</topMaximize>
+    <overlay><enabled>yes</enabled></overlay>
+  </snapping>
+  <regions>
+    <region name="nexus-haut-gauche" x="0%" y="0%" width="50%" height="50%" />
+    <region name="nexus-haut-droite" x="50%" y="0%" width="50%" height="50%" />
+    <region name="nexus-bas-gauche" x="0%" y="50%" width="50%" height="50%" />
+    <region name="nexus-bas-droite" x="50%" y="50%" width="50%" height="50%" />
+  </regions>
+
+  <!-- Redimensionner : tirer un bord ou un coin de la fenêtre,
+       ou Alt + clic droit glissé n'importe où dans la fenêtre -->
+  <resize><popupShow>Nonpixel</popupShow><drawContents>yes</drawContents></resize>
+
+  <keyboard>
+    <default />
+    <!-- Super+Entrée ou Ctrl+Alt+T : ouvrir un terminal -->
+    <keybind key="W-Return"><action name="Execute" command="foot" /></keybind>
+    <keybind key="C-A-t"><action name="Execute" command="foot" /></keybind>
+    <!-- Touche Super (Windows) : ouvrir/fermer le menu Démarrer -->
+    <keybind key="Super_L" onRelease="yes"><action name="Execute" command="nexus-menu" /></keybind>
+    <!-- Alt+F4 : fermer la fenêtre -->
+    <keybind key="A-F4"><action name="Close" /></keybind>
+  </keyboard>
+
+  <mouse>
+    <default />
+  </mouse>
+</labwc_config>

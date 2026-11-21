@@ -1,0 +1,18 @@
+NAME=jq
+VERSION=1.7.1
+DEPENDS=""
+DESC="Processeur JSON en ligne de commande (filtrer, transformer)"
+
+build() {
+    rm -rf "$WORK/jq-$VERSION"
+    tar -xf "$(fetch "https://github.com/jqlang/jq/releases/download/jq-$VERSION/jq-$VERSION.tar.gz")" -C "$WORK"
+    cd "$WORK/jq-$VERSION"
+    CC="$MUSL_CC" \
+        ./configure --prefix="$PREFIX" --with-oniguruma=builtin \
+            --enable-all-static --disable-shared --disable-docs \
+            --disable-maintainer-mode --disable-valgrind >/dev/null
+    make -j"$JOBS" >/dev/null
+    make install-strip DESTDIR="$DESTDIR" >/dev/null
+    # On ne garde que le binaire (pas la bibliothèque ni la doc)
+    rm -rf "$DESTDIR$PREFIX/share" "$DESTDIR$PREFIX/include" "$DESTDIR$PREFIX/lib"
+}

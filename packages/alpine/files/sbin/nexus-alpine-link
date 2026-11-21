@@ -1,0 +1,47 @@
+#!/bin/sh
+# nexus-alpine-link — « greffe » les paquets Alpine (/usr/local/alpine) dans /.
+#
+# Le système de base de Nexus est en mémoire : à chaque démarrage, ce script
+# recrée des liens pour que les programmes Alpine trouvent leurs fichiers aux
+# chemins habituels (/usr/lib, /usr/share/..., /lib/ld-musl-x86_64.so.1...).
+#   - un dossier absent de Nexus (ex. /usr/lib)  -> lien vers tout le dossier ;
+#   - un dossier existant (ex. /usr/bin, /etc)   -> un lien par élément absent ;
+#     ce qui existe déjà dans Nexus n'est jamais remplacé.
+#   --clean : retire aussi les liens devenus orphelins (après une suppression).
+AROOT=/usr/local/alpine
+[ -d "$AROOT" ] || exit 0
+
+link_dir() {   # chemin relatif, ex. usr/share
+    _src="$AROOT/$1" _dst="/$1"
+    [ -d "$_src" ] || return 0
+    if [ ! -e "$_dst" ] && [ ! -L "$_dst" ]; then
+        mkdir -p "$(dirname "$_dst")"
+        ln -s "$_src" "$_dst"
+        return 0
+    fi
+    [ -L "$_dst" ] && return 0          # déjà un lien (vers Alpine ou autre)
+    for _e in "$_src"/* "$_src"/.[!.]*; do
+        [ -e "$_e" ] || [ -L "$_e" ] || continue
+        _n=${_e##*/}
+        [ -e "$_dst/$_n" ] || [ -L "$_dst/$_n" ] || ln -s "$_e" "$_dst/$_n"
+    done
+}
+
+for d in lib bin sbin usr/lib usr/libexec usr/share usr/bin usr/sbin usr/include etc opt; do
+    link_dir "$d"
+done
+# Sous-dossiers de /usr/share et /etc déjà présents dans Nexus : un niveau de plus
+for d in usr/share/applications usr/share/icons usr/share/fonts etc/ssl; do
+    [ -d "/$d" ] && [ ! -L "/$d" ] && link_dir "$d"
+done
+
+if [ "${1:-}" = "--clean" ]; then
+    for d in / /lib /bin /sbin /usr /usr/bin /usr/sbin /usr/share /etc /usr/share/applications; do
+        [ -d "$d" ] || continue
+        for l in "$d"/* "$d"/.[!.]*; do
+            [ -L "$l" ] || continue
+            case "$(readlink "$l")" in "$AROOT"/*) [ -e "$l" ] || rm -f "$l" ;; esac
+        done
+    done
+fi
+exit 0

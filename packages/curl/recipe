@@ -1,0 +1,34 @@
+NAME=curl
+VERSION=8.17.0
+DEPENDS="ca-certificates"
+DESC="Transferts HTTP/HTTPS en ligne de commande (TLS via mbedTLS)"
+
+. "$PKG_LIB/mbedtls.sh"
+
+build() {
+    build_mbedtls_sysroot
+    mb="$MBEDTLS_SYSROOT/usr/local"
+    rm -rf "$WORK/curl-$VERSION"
+    tar -xf "$(fetch "https://curl.se/download/curl-$VERSION.tar.xz")" -C "$WORK"
+    cd "$WORK/curl-$VERSION"
+    CC="$MUSL_CC" \
+    CPPFLAGS="-I$mb/include" \
+    LDFLAGS="-L$mb/lib" \
+        ./configure --prefix="$PREFIX" \
+            --disable-shared --enable-static \
+            --with-mbedtls="$mb" \
+            --with-ca-bundle="$PREFIX/etc/ssl/certs/ca-certificates.crt" \
+            --without-libpsl --without-zlib --without-brotli --without-zstd \
+            --without-libidn2 --without-nghttp2 --without-libssh2 \
+            --disable-ldap --disable-ldaps --disable-rtsp --disable-dict \
+            --disable-telnet --disable-tftp --disable-pop3 --disable-imap \
+            --disable-smtp --disable-gopher --disable-mqtt \
+            --disable-manual --disable-docs >/dev/null
+    # libtool intercepte '-static' : '-all-static' est son option pour un
+    # binaire entièrement statique (sinon curl chercherait un chargeur dynamique)
+    make -j"$JOBS" LDFLAGS="-L$mb/lib -all-static" >/dev/null
+    make install-strip DESTDIR="$DESTDIR" >/dev/null
+    # On ne garde que l'outil curl (pas libcurl ni ses en-têtes)
+    rm -rf "$DESTDIR$PREFIX/include" "$DESTDIR$PREFIX/lib" "$DESTDIR$PREFIX/share" \
+           "$DESTDIR$PREFIX/bin/curl-config" "$DESTDIR$PREFIX/bin/wcurl"
+}

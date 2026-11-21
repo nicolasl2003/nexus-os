@@ -1,0 +1,28 @@
+NAME=nano
+VERSION=7.2
+DEPENDS="ncurses-terminfo"
+DESC="Éditeur de texte simple, avec coloration syntaxique"
+
+. "$PKG_LIB/ncurses.sh"
+
+build() {
+    build_ncurses_sysroot
+    nc="$NCURSES_SYSROOT/usr/local"
+    rm -rf "$WORK/nano-$VERSION"
+    tar -xf "$(fetch "https://www.nano-editor.org/dist/v7/nano-$VERSION.tar.xz")" -C "$WORK"
+    cd "$WORK/nano-$VERSION"
+    CC="$MUSL_CC" \
+    CPPFLAGS="-I$nc/include -I$nc/include/ncursesw" \
+    LDFLAGS="-L$nc/lib -static" \
+    NCURSESW_CFLAGS="-I$nc/include/ncursesw" \
+    NCURSESW_LIBS="-lncursesw" \
+        ./configure --prefix="$PREFIX" --sysconfdir="$PREFIX/etc" \
+            --disable-nls --disable-libmagic --disable-speller --enable-utf8 >/dev/null
+    make -j"$JOBS" >/dev/null
+    make install-strip DESTDIR="$DESTDIR" >/dev/null
+    rm -rf "$DESTDIR$PREFIX/share/man" "$DESTDIR$PREFIX/share/info" "$DESTDIR$PREFIX/share/doc"
+
+    # Active la coloration syntaxique par défaut
+    mkdir -p "$DESTDIR$PREFIX/etc"
+    echo "include \"$PREFIX/share/nano/*.nanorc\"" > "$DESTDIR$PREFIX/etc/nanorc"
+}

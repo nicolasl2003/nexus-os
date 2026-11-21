@@ -1,0 +1,33 @@
+#!/bin/sh
+# nexus-desktop — lance le bureau graphique de Nexus OS
+# (à lancer depuis l'écran de connexion, sur l'écran du PC)
+
+die() { printf '\033[1;31mnexus-desktop :\033[0m %s\n' "$*" >&2; exit 1; }
+
+[ -z "$WAYLAND_DISPLAY" ] || die "le bureau est déjà lancé."
+[ -e /dev/dri/card0 ] || die "aucune carte graphique détectée (/dev/dri/card0)."
+service seatd status >/dev/null 2>&1 || die "le service seatd n'est pas démarré (su -c 'service seatd start')."
+if [ "$(id -u)" != 0 ] && ! id -nG | grep -qw video; then
+    die "ton compte doit faire partie du groupe 'video' (su -c 'addgroup $(id -un) video', puis reconnecte-toi)."
+fi
+
+# Dossier privé de session (sockets Wayland...), exigé par les applications
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null
+[ -O "$XDG_RUNTIME_DIR" ] || die "$XDG_RUNTIME_DIR n'appartient pas à ton compte."
+chmod 700 "$XDG_RUNTIME_DIR"
+
+export XDG_CONFIG_DIRS=/usr/local/etc/xdg
+export XDG_DATA_DIRS=/usr/local/share
+export XDG_SESSION_TYPE=wayland
+export LIBSEAT_BACKEND=seatd
+export WLR_RENDERER=pixman          # rendu logiciel (pas besoin de 3D)
+export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-fr}"
+# Touches mortes (^ puis e = ê) : table Compose de X.org
+export XCOMPOSEFILE=/usr/local/share/X11/locale/en_US.UTF-8/Compose
+export LANG="${LANG:-C.UTF-8}"
+# Heure de Paris (règle POSIX : pas besoin de base de fuseaux horaires)
+export TZ="${TZ:-CET-1CEST,M3.5.0,M10.5.0/3}"
+
+cd "$HOME" || true
+exec labwc

@@ -1,0 +1,21 @@
+#!/bin/sh
+# Applique le bail DHCP reçu par udhcpc
+case "$1" in
+    deconfig) ip addr flush dev "$interface" ;;
+    bound|renew)
+        ip addr flush dev "$interface"
+        ip addr add "$ip/${mask:-24}" dev "$interface"
+        [ -n "$router" ] && ip route add default via "${router%% *}" dev "$interface"
+        : > /etc/resolv.conf
+        for d in $dns; do echo "nameserver $d" >> /etc/resolv.conf; done
+        # Si le serveur DNS fourni ne répond pas (cas du DNS intégré de QEMU
+        # sur certains Mac), on ajoute des serveurs publics de secours.
+        # Vérification en arrière-plan pour ne pas ralentir le démarrage.
+        first="${dns%% *}"
+        if [ -n "$first" ]; then
+            ( if ! timeout 5 nslookup example.com "$first" >/dev/null 2>&1; then
+                  printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' >> /etc/resolv.conf
+              fi ) </dev/null >/dev/null 2>&1 &
+        fi
+        ;;
+esac

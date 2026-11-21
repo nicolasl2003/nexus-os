@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Compositeur de l'écran de connexion : aucun raccourci, aucun menu -->
+<labwc_config>
+  <core><decoration>server</decoration></core>
+  <theme><name>Nexus</name></theme>
+  <keyboard></keyboard>
+  <mouse><default /></mouse>
+</labwc_config>

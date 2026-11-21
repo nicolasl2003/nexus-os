@@ -1,0 +1,40 @@
+#!/bin/sh
+# nexus-wifi-test — essayer le Wi-Fi sans carte Wi-Fi (ex. dans QEMU).
+# Crée deux radios simulées par le noyau (mac80211_hwsim) : l'une devient un
+# point d'accès "Nexus-Test" (WPA2, mot de passe : nexus2026), l'autre une
+# carte Wi-Fi ordinaire. Il suffit ensuite de s'y connecter depuis le
+# panneau Réseau de la barre des tâches.
+[ "$(id -u)" = 0 ] || { echo "À lancer en root : su -c nexus-wifi-test"; exit 1; }
+before=$(ls /sys/class/net)
+modprobe mac80211_hwsim radios=2 || { echo "Module mac80211_hwsim indisponible (paquet linux-wifi ?)"; exit 1; }
+sleep 1
+new=$(for i in $(ls /sys/class/net); do echo "$before" | grep -qx "$i" || echo "$i"; done)
+AP=$(echo "$new" | tail -n 1)
+[ -n "$AP" ] || { echo "Radios simulées introuvables"; exit 1; }
+echo "$AP" > /run/nexus-wifi-exclude
+service wifi stop >/dev/null 2>&1
+
+cat > /run/hostapd-test.conf <<CONF
+interface=$AP
+driver=nl80211
+ssid=Nexus-Test
+hw_mode=g
+channel=6
+wpa=2
+wpa_passphrase=nexus2026
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+CONF
+hostapd -B -P /run/hostapd-test.pid /run/hostapd-test.conf >/dev/null || { echo "Échec du point d'accès"; exit 1; }
+ip addr add 192.168.77.1/24 dev "$AP" 2>/dev/null
+cat > /run/udhcpd-test.conf <<CONF
+interface $AP
+start 192.168.77.10
+end 192.168.77.50
+lease_file /run/udhcpd-test.leases
+opt subnet 255.255.255.0
+CONF
+touch /run/udhcpd-test.leases
+udhcpd /run/udhcpd-test.conf
+service wifi start
+echo "Point d'accès de test prêt : réseau « Nexus-Test », mot de passe « nexus2026 »."

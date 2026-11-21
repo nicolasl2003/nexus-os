@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Magasin d'applications
+Comment=Installer et supprimer des applications
+Exec=nexus-store
+Icon=system-software-install

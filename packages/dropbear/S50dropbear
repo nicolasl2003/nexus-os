@@ -1,0 +1,33 @@
+#!/bin/sh
+# Service : serveur SSH dropbear (port 22)
+# - clé d'hôte générée au premier démarrage et conservée (disque persistant)
+# - connexion root interdite : connecte-toi avec ton compte puis 'su'
+KEYDIR=/usr/local/etc/dropbear
+KEY="$KEYDIR/dropbear_ed25519_host_key"
+PIDFILE=/run/dropbear.pid
+
+# /proc/<pid> plutôt que kill -0 : fonctionne aussi pour un utilisateur non-root
+running() { [ -f "$PIDFILE" ] && [ -d "/proc/$(cat "$PIDFILE")" ]; }
+
+case "$1" in
+    start)
+        running && { echo "dropbear : déjà actif"; exit 0; }
+        if [ ! -f "$KEY" ]; then
+            mkdir -p "$KEYDIR"
+            echo "dropbear : génération de la clé d'hôte..."
+            /usr/local/bin/dropbearkey -t ed25519 -f "$KEY" >/dev/null 2>&1
+        fi
+        /usr/local/sbin/dropbear -r "$KEY" -w -p 22 -P "$PIDFILE" &&
+            echo "dropbear : serveur SSH démarré (port 22)"
+        ;;
+    stop)
+        running && kill "$(cat "$PIDFILE")" && echo "dropbear : arrêté"
+        rm -f "$PIDFILE"
+        ;;
+    status)
+        if running; then echo "dropbear : actif (pid $(cat "$PIDFILE"))"; exit 0
+        else echo "dropbear : arrêté"; exit 1; fi
+        ;;
+    *)
+        echo "Usage : $0 start|stop|status"; exit 1 ;;
+esac

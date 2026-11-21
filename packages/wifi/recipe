@@ -1,0 +1,13 @@
+NAME=wifi
+VERSION=2.11
+DEPENDS="linux-wifi"
+DESC="Wi-Fi : wpa_supplicant (WPA/WPA2), service wifi, outil de test nexus-wifi-test"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    gui_bin wpa_supplicant wpa_cli wpa_passphrase hostapd hostapd_cli
+    install -Dm755 "$RECIPE_DIR/S30wifi" "$DESTDIR$PREFIX/etc/init.d/S30wifi"
+    install -Dm755 "$RECIPE_DIR/nexus-wifi-test" "$DESTDIR$PREFIX/bin/nexus-wifi-test"
+    install -Dm644 "$RECIPE_DIR/wpa_supplicant.conf" "$DESTDIR$PREFIX/share/wifi/wpa_supplicant.conf"
+}

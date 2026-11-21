@@ -1,0 +1,8 @@
+build/
+dist/
+disk/
+keys/*.key
+tools/
+.DS_Store
+*.img
+*.iso

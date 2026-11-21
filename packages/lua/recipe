@@ -1,0 +1,14 @@
+NAME=lua
+VERSION=5.4.6
+DEPENDS=""
+DESC="Langage de script léger et rapide"
+
+build() {
+    rm -rf "$WORK/lua-$VERSION"
+    tar -xf "$(fetch "https://www.lua.org/ftp/lua-$VERSION.tar.gz")" -C "$WORK"
+    cd "$WORK/lua-$VERSION"
+    make -j"$JOBS" CC="$MUSL_CC" MYLDFLAGS=-static posix >/dev/null
+    make install INSTALL_TOP="$DESTDIR$PREFIX" >/dev/null
+    strip "$DESTDIR$PREFIX/bin/lua" "$DESTDIR$PREFIX/bin/luac"
+    rm -rf "$DESTDIR$PREFIX/man" "$DESTDIR$PREFIX/share/man"
+}

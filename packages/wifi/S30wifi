@@ -1,0 +1,46 @@
+#!/bin/sh
+# Service : Wi-Fi. wpa_supplicant (connexion WPA/WPA2) + udhcpc (adresse IP)
+# sur chaque carte Wi-Fi. Les réseaux se choisissent dans le panneau Réseau
+# de la barre des tâches (ou avec wpa_cli).
+CONF=/usr/local/etc/wpa_supplicant.conf
+
+ifaces() {
+    for d in /sys/class/net/*/wireless; do
+        [ -e "$d" ] || continue
+        i=$(basename "$(dirname "$d")")
+        grep -qw "$i" /run/nexus-wifi-exclude 2>/dev/null && continue   # point d'accès de test
+        echo "$i"
+    done
+}
+running() { ls /run/wpa_supplicant-*.pid >/dev/null 2>&1; }
+
+case "$1" in
+    start)
+        if [ ! -f "$CONF" ]; then
+            mkdir -p "$(dirname "$CONF")"
+            cp /usr/local/share/wifi/wpa_supplicant.conf "$CONF"
+            chmod 600 "$CONF"      # contient les mots de passe Wi-Fi
+        fi
+        grep -q '^netdev:' /etc/group || addgroup -S netdev
+        list=""
+        for i in $(ifaces); do
+            ip link set "$i" up
+            wpa_supplicant -B -i "$i" -c "$CONF" -P "/run/wpa_supplicant-$i.pid" >/dev/null &&
+            udhcpc -b -i "$i" -p "/run/udhcpc-$i.pid" -s /usr/share/udhcpc/default.script >/dev/null 2>&1
+            list="$list $i"
+        done
+        if [ -n "$list" ]; then echo "wifi : démarré ($list )"; else echo "wifi : aucune carte Wi-Fi détectée"; fi
+        ;;
+    stop)
+        for p in /run/wpa_supplicant-*.pid /run/udhcpc-wlan*.pid; do
+            [ -f "$p" ] && kill "$(cat "$p")" 2>/dev/null
+            rm -f "$p"
+        done
+        echo "wifi : arrêté"
+        ;;
+    status)
+        if running; then echo "wifi : actif ($(ifaces | tr '\n' ' '))"; exit 0
+        else echo "wifi : arrêté"; exit 1; fi
+        ;;
+    *) echo "Usage : $0 start|stop|status"; exit 1 ;;
+esac

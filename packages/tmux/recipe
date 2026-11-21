@@ -1,0 +1,26 @@
+NAME=tmux
+VERSION=3.5a
+DEPENDS="ncurses-terminfo"
+DESC="Multiplexeur de terminal : plusieurs shells dans une seule fenêtre"
+
+. "$PKG_LIB/ncurses.sh"
+. "$PKG_LIB/libevent.sh"
+
+build() {
+    build_ncurses_sysroot
+    build_libevent_sysroot
+    nc="$NCURSES_SYSROOT/usr/local"
+    le="$LIBEVENT_SYSROOT/usr/local"
+    rm -rf "$WORK/tmux-$VERSION"
+    tar -xf "$(fetch "https://github.com/tmux/tmux/releases/download/$VERSION/tmux-$VERSION.tar.gz")" -C "$WORK"
+    cd "$WORK/tmux-$VERSION"
+    CC="$MUSL_CC" \
+    CPPFLAGS="-I$nc/include -I$nc/include/ncursesw -I$le/include" \
+    LDFLAGS="-L$nc/lib -L$le/lib" \
+    LIBTINFO_CFLAGS="-I$nc/include/ncursesw" LIBTINFO_LIBS="-lncursesw" \
+    LIBEVENT_CORE_CFLAGS="-I$le/include" LIBEVENT_CORE_LIBS="-levent_core" \
+        ./configure --prefix="$PREFIX" --enable-static --disable-utf8proc >/dev/null
+    make -j"$JOBS" >/dev/null
+    make install-strip DESTDIR="$DESTDIR" >/dev/null
+    rm -rf "$DESTDIR$PREFIX/share"
+}

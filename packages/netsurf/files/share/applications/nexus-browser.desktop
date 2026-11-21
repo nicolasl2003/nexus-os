@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Navigateur
+Comment=Naviguer sur le Web
+Exec=nexus-browser %u
+TryExec=netsurf-fb
+Icon=web-browser

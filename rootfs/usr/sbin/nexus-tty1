@@ -1,0 +1,7 @@
+#!/bin/sh
+# Premier écran du PC (tty1) : connexion graphique si le bureau Nexus est
+# installé, sinon connexion texte (avec l'assistant de premier démarrage).
+if [ -x /usr/local/sbin/nexus-login ]; then
+    exec /usr/local/sbin/nexus-login
+fi
+exec /usr/sbin/nexus-getty tty1 38400 linux

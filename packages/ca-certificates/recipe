@@ -1,0 +1,13 @@
+NAME=ca-certificates
+VERSION=2026.11.05
+DEPENDS=""
+DESC="Certificats racines (Mozilla) pour vérifier l'identité des sites HTTPS"
+
+build() {
+    # Bundle extrait du magasin de certificats de Firefox, publié par curl.se
+    date=$(echo "$VERSION" | tr . -)
+    pem="$(fetch "https://curl.se/ca/cacert-$date.pem")"
+    install -Dm644 "$pem" "$DESTDIR$PREFIX/etc/ssl/certs/ca-certificates.crt"
+    count=$(grep -c 'BEGIN CERTIFICATE' "$pem")
+    log "$count certificats racines"
+}

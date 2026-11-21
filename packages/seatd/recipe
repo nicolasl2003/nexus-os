@@ -1,0 +1,11 @@
+NAME=seatd
+VERSION=0.9.1
+DEPENDS=""
+DESC="Gestion de siège : donne au bureau l'accès à l'écran, au clavier et à la souris"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    gui_bin seatd
+    install -Dm755 "$RECIPE_DIR/S20seatd" "$DESTDIR$PREFIX/etc/init.d/S20seatd"
+}

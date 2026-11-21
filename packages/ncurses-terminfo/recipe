@@ -1,0 +1,19 @@
+NAME=ncurses-terminfo
+VERSION=6.4
+DEPENDS=""
+DESC="Descriptions des terminaux (linux, xterm, vt100, screen, tmux...)"
+
+. "$PKG_LIB/ncurses.sh"
+
+build() {
+    build_ncurses_sysroot
+    src="$NCURSES_SYSROOT/usr/local/share/terminfo"
+    # On ne garde que les terminaux courants (la base complète fait ~8 Mo)
+    for t in linux vt100 vt102 vt220 ansi dumb xterm xterm-color xterm-256color \
+             screen screen-256color tmux tmux-256color; do
+        f=$(cd "$src" && find . -name "$t" | head -n 1)
+        [ -n "$f" ] || continue
+        mkdir -p "$DESTDIR$PREFIX/share/terminfo/$(dirname "$f")"
+        cp "$src/$f" "$DESTDIR$PREFIX/share/terminfo/$f"
+    done
+}

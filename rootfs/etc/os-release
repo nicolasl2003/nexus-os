@@ -1,0 +1,4 @@
+NAME="Nexus OS"
+ID=nexus
+VERSION="@VERSION@"
+PRETTY_NAME="Nexus OS @VERSION@"

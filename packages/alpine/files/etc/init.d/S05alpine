@@ -1,0 +1,7 @@
+#!/bin/sh
+# Paquets Alpine : recrée les liens dans / au démarrage (voir nexus-alpine-link)
+case "${1:-start}" in
+    start) /usr/local/sbin/nexus-alpine-link && echo "alpine : paquets Alpine disponibles" ;;
+    stop) ;;
+    *) echo "Usage : $0 start|stop" ;;
+esac

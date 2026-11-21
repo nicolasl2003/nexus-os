@@ -1,0 +1,10 @@
+NAME=openssl
+VERSION=3.4.1
+DEPENDS="ca-certificates"
+DESC="Boîte à outils de chiffrement OpenSSL (certificats, signatures, empreintes)"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    gui_bin openssl
+}

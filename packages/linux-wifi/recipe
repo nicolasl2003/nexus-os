@@ -1,0 +1,49 @@
+NAME=linux-wifi
+VERSION=6.12.10
+REL=2
+DEPENDS=""
+DESC="Pilotes Wi-Fi (Intel, MediaTek, Realtek, Atheros) et leurs firmwares"
+
+. "$PKG_LIB/gui.sh"
+
+# Firmwares fournis par les fabricants (dépôt officiel linux-firmware)
+LF=https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain
+FIRMWARES="
+intel/iwlwifi/iwlwifi-cc-a0-77.ucode:iwlwifi-cc-a0-77.ucode
+intel/iwlwifi/iwlwifi-QuZ-a0-hr-b0-77.ucode:iwlwifi-QuZ-a0-hr-b0-77.ucode
+intel/iwlwifi/iwlwifi-ty-a0-gf-a0-89.ucode:iwlwifi-ty-a0-gf-a0-89.ucode
+intel/iwlwifi/iwlwifi-ty-a0-gf-a0.pnvm:iwlwifi-ty-a0-gf-a0.pnvm
+intel/iwlwifi/iwlwifi-so-a0-gf-a0-89.ucode:iwlwifi-so-a0-gf-a0-89.ucode
+intel/iwlwifi/iwlwifi-so-a0-gf-a0.pnvm:iwlwifi-so-a0-gf-a0.pnvm
+intel/iwlwifi/iwlwifi-9000-pu-b0-jf-b0-46.ucode:iwlwifi-9000-pu-b0-jf-b0-46.ucode
+intel/iwlwifi/iwlwifi-9260-th-b0-jf-b0-46.ucode:iwlwifi-9260-th-b0-jf-b0-46.ucode
+intel/iwlwifi/iwlwifi-8265-36.ucode:iwlwifi-8265-36.ucode
+intel/iwlwifi/iwlwifi-7265D-29.ucode:iwlwifi-7265D-29.ucode
+mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin:mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin
+mediatek/WIFI_RAM_CODE_MT7961_1.bin:mediatek/WIFI_RAM_CODE_MT7961_1.bin
+rtw88/rtw8822c_fw.bin:rtw88/rtw8822c_fw.bin
+rtw88/rtw8822c_wow_fw.bin:rtw88/rtw8822c_wow_fw.bin
+rtw88/rtw8821c_fw.bin:rtw88/rtw8821c_fw.bin
+rtw88/rtw8822b_fw.bin:rtw88/rtw8822b_fw.bin
+ath9k_htc/htc_9271-1.4.0.fw:ath9k_htc/htc_9271-1.4.0.fw
+ath9k_htc/htc_7010-1.4.0.fw:ath9k_htc/htc_7010-1.4.0.fw
+"
+
+build() {
+    rel=$(cat "$OUT_DIR/kernel-release")
+    src="$OUT_DIR/modules/lib/modules/$rel"
+    [ -d "$src" ] || { echo "Modules absents : lance 'make kernel'" >&2; exit 1; }
+    mkdir -p "$DESTDIR$PREFIX/lib/modules"
+    cp -a "$src" "$DESTDIR$PREFIX/lib/modules/"
+    rm -f "$DESTDIR$PREFIX/lib/modules/$rel/build" "$DESTDIR$PREFIX/lib/modules/$rel/source"
+
+    fw="$DESTDIR$PREFIX/lib/firmware"
+    mkdir -p "$fw"
+    for entry in $FIRMWARES; do
+        from="${entry%%:*}"; to="${entry#*:}"
+        mkdir -p "$fw/$(dirname "$to")"
+        cp "$(fetch "$LF/$from" "firmware-$(echo "$from" | tr / _)")" "$fw/$to"
+    done
+    # Base réglementaire Wi-Fi (canaux autorisés par pays)
+    gui_copy lib/firmware/regulatory.db lib/firmware/regulatory.db.p7s
+}

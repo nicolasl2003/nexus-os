@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Fichiers
+Comment=Parcourir et organiser tes fichiers
+Exec=nexus-files
+Icon=system-file-manager

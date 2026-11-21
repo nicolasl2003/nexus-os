@@ -1,0 +1,296 @@
+#!/bin/sh
+# npk alpine — installe les paquets d'Alpine Linux (~30 000 logiciels) sur Nexus OS.
+#
+#   npk alpine update               télécharge la liste des paquets (signée)
+#   npk alpine search <mot>         cherche un logiciel
+#   npk alpine info <paquet>        description, version, dépendances
+#   npk alpine install <paquet>...  installe (avec ses dépendances)
+#   npk alpine remove <paquet>...   supprime
+#   npk alpine list                 paquets Alpine installés
+#   npk alpine upgrade              met à jour les paquets Alpine installés
+#
+# Alpine utilise la même bibliothèque C que Nexus (musl) : ses programmes
+# fonctionnent tels quels. Ils sont installés dans /usr/local/alpine (sur le
+# disque persistant) puis « greffés » dans / par des liens (nexus-alpine-link,
+# relancé à chaque démarrage).
+#
+# Sécurité : chaque liste et chaque paquet est vérifié avec les clés publiques
+# d'Alpine (signature RSA vérifiée par openssl), puis le contenu est comparé à
+# l'empreinte SHA-256 signée. Un paquet modifié est refusé.
+set -eu
+
+CONF=/usr/local/etc/npk/alpine.conf
+MIRROR="https://dl-cdn.alpinelinux.org/alpine"
+BRANCH="v3.21"
+REPOS="main community"
+ARCH="x86_64"
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && . "$CONF"
+
+AROOT=/usr/local/alpine
+ADB=/usr/local/var/lib/npk/alpine
+KEYS=/usr/local/share/npk/alpine-keys
+CACHE=/usr/local/var/cache/npk/alpine
+# Paquets d'Alpine que Nexus fournit déjà à sa façon (jamais installés)
+SKIP="busybox busybox-binsh busybox-suid busybox-openrc alpine-baselayout alpine-baselayout-data
+      alpine-release alpine-keys apk-tools openrc mdev-conf ifupdown-ng alpine-conf libc-utils
+      busybox-mdev-openrc"
+
+die() { printf '\033[1;31mnpk alpine :\033[0m %s\n' "$*" >&2; exit 1; }
+say() { printf '\033[1;36m::\033[0m %s\n' "$*"; }
+
+need_root() {
+    [ "$(id -u)" = 0 ] || die "il faut être root (su -c \"npk alpine $*\")"
+    mkdir -p "$AROOT" "$ADB/installed" "$CACHE"
+}
+need_index() { ls "$ADB"/*.idx >/dev/null 2>&1 || die "liste absente : lance d'abord 'npk alpine update'"; }
+
+download() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 2 -o "$2" "$1"
+    else
+        wget -q -O "$2" "$1"
+    fi
+}
+
+# verify <dossier découpé> <segment signé> : signature RSA avec une clé d'Alpine
+verify_sig() {
+    _d=$1
+    mkdir -p "$_d/sig"
+    tar -xzf "$_d/1.gz" -C "$_d/sig" 2>/dev/null || return 1
+    for _s in "$_d"/sig/.SIGN.RSA256.* "$_d"/sig/.SIGN.RSA.*; do
+        [ -f "$_s" ] || continue
+        _name=${_s##*/}
+        case "$_name" in
+            .SIGN.RSA256.*) _key=${_name#.SIGN.RSA256.}; _alg=-sha256 ;;
+            *)              _key=${_name#.SIGN.RSA.};    _alg=-sha1 ;;
+        esac
+        [ -f "$KEYS/$_key" ] || continue
+        openssl dgst "$_alg" -verify "$KEYS/$_key" -signature "$_s" "$_d/$2" >/dev/null 2>&1 && return 0
+    done
+    return 1
+}
+
+cmd_update() {
+    need_root update
+    command -v openssl >/dev/null || die "openssl absent (npk install openssl)"
+    for _r in $REPOS; do
+        _tmp=$(mktemp -d)
+        say "Téléchargement de la liste $_r ($BRANCH)"
+        download "$MIRROR/$BRANCH/$_r/$ARCH/APKINDEX.tar.gz" "$_tmp/APKINDEX.tar.gz" ||
+            { rm -rf "$_tmp"; die "miroir injoignable : $MIRROR"; }
+        apk-split "$_tmp/APKINDEX.tar.gz" "$_tmp" >/dev/null || { rm -rf "$_tmp"; die "liste $_r illisible"; }
+        verify_sig "$_tmp" 2.gz || { rm -rf "$_tmp"; die "signature de la liste $_r invalide : refusée"; }
+        mkdir -p "$_tmp/idx"
+        tar -xzf "$_tmp/2.gz" -C "$_tmp/idx" APKINDEX 2>/dev/null || { rm -rf "$_tmp"; die "liste $_r illisible"; }
+        mv "$_tmp/idx/APKINDEX" "$ADB/$_r.idx"
+        rm -rf "$_tmp"
+    done
+    chmod 644 "$ADB"/*.idx
+    say "$(cat "$ADB"/*.idx | grep -c '^P:') paquets Alpine disponibles"
+}
+
+# Liste « nom version dépôt description » de tous les paquets
+all_pkgs() {
+    for _r in $REPOS; do
+        [ -f "$ADB/$_r.idx" ] || continue
+        awk -v repo="$_r" '
+            /^P:/ { p = substr($0, 3) } /^V:/ { v = substr($0, 3) } /^T:/ { t = substr($0, 3) }
+            /^$/  { if (p != "") print p "\t" v "\t" repo "\t" t; p = v = t = "" }
+            END   { if (p != "") print p "\t" v "\t" repo "\t" t }' "$ADB/$_r.idx"
+    done
+}
+
+cmd_search() {
+    need_index
+    [ -n "${1:-}" ] || die "usage : npk alpine search <mot>"
+    all_pkgs | awk -F'\t' -v q="$1" '
+        BEGIN { q = tolower(q) }
+        index(tolower($1), q) || index(tolower($4), q) { print }' |
+    sort | head -n 60 | while IFS="$(printf '\t')" read -r n v r d; do
+        _tag=""
+        [ -f "$ADB/installed/$n" ] && _tag=" \033[1;32m[installé]\033[0m"
+        printf "\033[1m%-28s\033[0m %-14s %s%b\n" "$n" "$v" "$d" "$_tag"
+    done
+}
+
+cmd_info() {
+    need_index
+    [ -n "${1:-}" ] || die "usage : npk alpine info <paquet>"
+    for _r in $REPOS; do
+        awk -v want="$1" -v repo="$_r" '
+            /^P:/ { p = substr($0, 3) }
+            p == want && /^(V|T|U|L|S|I|D):/ {
+                k = substr($0, 1, 1); v = substr($0, 3)
+                if (k == "V") print "Version      : " v
+                if (k == "T") print "Description  : " v
+                if (k == "U") print "Site         : " v
+                if (k == "L") print "Licence      : " v
+                if (k == "S") printf "Téléchargement : %.1f Mo\n", v / 1048576
+                if (k == "I") printf "Taille installée : %.1f Mo\n", v / 1048576
+                if (k == "D") print "Dépendances  : " v
+            }
+            /^$/ { if (p == want) { print "Dépôt        : " repo; exit } p = "" }' "$ADB/$_r.idx" 2>/dev/null
+    done
+    [ -f "$ADB/installed/$1" ] && echo "Statut       : installé ($(head -n1 "$ADB/installed/$1"))"
+    return 0
+}
+
+# Résout les dépendances : affiche « nom version dépôt » des paquets à installer
+resolve() {
+    _skip=$(echo $SKIP)
+    _inst=$(ls "$ADB/installed" 2>/dev/null | tr '\n' ' ')
+    for _r in $REPOS; do [ -f "$ADB/$_r.idx" ] && printf '#REPO %s\n' "$_r" && cat "$ADB/$_r.idx" && echo; done |
+    awk -v want="$*" -v skip="$_skip" -v inst="$_inst" -v force="${FORCE_NAMES:-}" '
+        function strip(d) { sub(/[<>=~].*/, "", d); return d }
+        /^#REPO / { repo = $2; next }
+        /^P:/ { p = substr($0, 3); ver[p] = ""; rep[p] = repo; if (!(p in prov)) prov[p] = p; next }
+        /^V:/ { ver[p] = substr($0, 3); next }
+        /^D:/ { deps[p] = substr($0, 3); next }
+        /^p:/ { n = split(substr($0, 3), a, " "); for (i = 1; i <= n; i++) { q = strip(a[i]); if (!(q in prov)) prov[q] = p } next }
+        END {
+            n = split(skip, s, " "); for (i = 1; i <= n; i++) skipped[s[i]] = 1
+            n = split(inst, s, " "); for (i = 1; i <= n; i++) have[s[i]] = 1
+            n = split(force, s, " "); for (i = 1; i <= n; i++) forced[s[i]] = 1
+            n = split(want, w, " ")
+            for (i = 1; i <= n; i++) {
+                if (!(w[i] in ver)) { print "?" w[i]; continue }
+                queue[++qn] = w[i]
+            }
+            for (qi = 1; qi <= qn; qi++) {
+                p = queue[qi]
+                if (p in seen) continue
+                seen[p] = 1
+                if (skipped[p]) continue
+                if (!have[p] || forced[p]) print p " " ver[p] " " rep[p]
+                m = split(deps[p], d, " ")
+                for (j = 1; j <= m; j++) {
+                    if (d[j] ~ /^!/) continue
+                    q = strip(d[j])
+                    if (!(q in prov)) { print "?" q; continue }
+                    q = prov[q]
+                    if (!(q in seen)) queue[++qn] = q
+                }
+            }
+        }'
+}
+
+install_one() {   # nom version dépôt
+    _n=$1 _v=$2 _r=$3
+    _file="$_n-$_v.apk"
+    _tmp=$(mktemp -d)
+    download "$MIRROR/$BRANCH/$_r/$ARCH/$_file" "$_tmp/p.apk" || { rm -rf "$_tmp"; die "échec du téléchargement de $_file"; }
+    apk-split "$_tmp/p.apk" "$_tmp" >/dev/null || { rm -rf "$_tmp"; die "$_file illisible"; }
+    [ -f "$_tmp/3.gz" ] || { rm -rf "$_tmp"; die "$_file incomplet"; }
+    verify_sig "$_tmp" 2.gz || { rm -rf "$_tmp"; die "signature de $_file invalide : refusé"; }
+    mkdir -p "$_tmp/ctl"
+    tar -xzf "$_tmp/2.gz" -C "$_tmp/ctl" 2>/dev/null
+    _hash=$(sed -n 's/^datahash = //p' "$_tmp/ctl/.PKGINFO")
+    _got=$(sha256sum "$_tmp/3.gz" | cut -d' ' -f1)
+    [ -n "$_hash" ] && [ "$_hash" = "$_got" ] || { rm -rf "$_tmp"; die "contenu de $_file altéré : refusé"; }
+    # liste des fichiers (sans les en-têtes internes d'apk), puis extraction
+    tar -tzf "$_tmp/3.gz" 2>/dev/null | grep -v '^\.SIGN\|^\.PKGINFO\|PaxHeader' > "$_tmp/files" || true
+    # ancienne version : on retire les fichiers qui ont disparu
+    if [ -f "$ADB/installed/$_n" ]; then
+        tail -n +2 "$ADB/installed/$_n" | sort > "$_tmp/old"
+        sort "$_tmp/files" > "$_tmp/new"
+        comm -23 "$_tmp/old" "$_tmp/new" | while read -r f; do
+            [ -n "$f" ] && [ ! -d "$AROOT/$f" ] && rm -f "$AROOT/$f"
+        done
+    fi
+    tar -xzf "$_tmp/3.gz" -C "$AROOT" 2>/dev/null || { rm -rf "$_tmp"; die "extraction de $_file impossible"; }
+    rm -rf "$AROOT/.SIGN"* "$AROOT/.PKGINFO" 2>/dev/null || true
+    { echo "$_v"; cat "$_tmp/files"; } > "$ADB/installed/$_n"
+    [ -f "$_tmp/ctl/.post-install" ] && echo "$_n" >> "$ADB/scripts-skipped"
+    rm -rf "$_tmp"
+    say "$_n $_v installé"
+}
+
+cmd_install() {
+    need_root install "$@"
+    need_index
+    [ $# -gt 0 ] || die "usage : npk alpine install <paquet>..."
+    command -v openssl >/dev/null || die "openssl absent (npk install openssl)"
+    _plan=$(resolve "$@")
+    _missing=$(echo "$_plan" | sed -n 's/^?//p' | tr '\n' ' ')
+    for _p in "$@"; do
+        case " $_missing " in *" $_p "*) die "paquet inconnu : $_p (essaie : npk alpine search $_p)" ;; esac
+    done
+    _list=$(echo "$_plan" | grep -v '^?' | grep . || true)
+    [ -n "$_list" ] || { say "Déjà installé."; return 0; }
+    _count=$(echo "$_list" | wc -l)
+    say "$_count paquet(s) à installer : $(echo "$_list" | cut -d' ' -f1 | tr '\n' ' ')"
+    _i=0
+    echo "$_list" | while read -r n v r; do
+        _i=$((_i + 1))
+        printf '\033[1;36m::\033[0m [%d/%d] %s\n' "$_i" "$_count" "$n"
+        install_one "$n" "$v" "$r"
+    done
+    nexus-alpine-link
+    say "Terminé. Les programmes Alpine se lancent comme les autres (ex. : $1)."
+}
+
+cmd_remove() {
+    need_root remove "$@"
+    [ $# -gt 0 ] || die "usage : npk alpine remove <paquet>..."
+    for _p in "$@"; do
+        [ -f "$ADB/installed/$_p" ] || die "$_p n'est pas installé"
+        # fichiers encore utilisés par un autre paquet Alpine : conservés
+        tail -n +2 "$ADB/installed/$_p" | sort > /tmp/npk-alpine-rm.$$
+        for _o in "$ADB"/installed/*; do
+            [ "$_o" = "$ADB/installed/$_p" ] && continue
+            tail -n +2 "$_o"
+        done | sort -u > /tmp/npk-alpine-keep.$$
+        comm -23 /tmp/npk-alpine-rm.$$ /tmp/npk-alpine-keep.$$ | sort -r | while read -r f; do
+            [ -n "$f" ] || continue
+            if [ -d "$AROOT/$f" ] && [ ! -L "$AROOT/$f" ]; then rmdir "$AROOT/$f" 2>/dev/null || true
+            else rm -f "$AROOT/$f"; fi
+        done
+        rm -f /tmp/npk-alpine-rm.$$ /tmp/npk-alpine-keep.$$ "$ADB/installed/$_p"
+        say "$_p supprimé"
+    done
+    nexus-alpine-link --clean
+}
+
+cmd_list() {
+    [ -d "$ADB/installed" ] || return 0
+    for _f in "$ADB"/installed/*; do
+        [ -f "$_f" ] && printf "%-28s %s\n" "${_f##*/}" "$(head -n1 "$_f")"
+    done
+    return 0
+}
+
+cmd_upgrade() {
+    need_root upgrade
+    need_index
+    _names=$(ls "$ADB/installed" 2>/dev/null | tr '\n' ' ')
+    [ -n "$_names" ] || { say "Aucun paquet Alpine installé."; return 0; }
+    _todo=""
+    for _n in $_names; do
+        _new=$(all_pkgs | awk -F'\t' -v n="$_n" '$1 == n { print $2; exit }')
+        [ -n "$_new" ] && [ "$_new" != "$(head -n1 "$ADB/installed/$_n")" ] && _todo="$_todo $_n"
+    done
+    [ -n "$_todo" ] || { say "Tout est à jour."; return 0; }
+    FORCE_NAMES="$_todo"
+    export FORCE_NAMES
+    say "Mises à jour :$_todo"
+    resolve $_todo | grep -v '^?' | while read -r n v r; do install_one "$n" "$v" "$r"; done
+    nexus-alpine-link
+}
+
+usage() {
+    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case "$cmd" in
+    update|up)     cmd_update ;;
+    search|s)      cmd_search "$@" ;;
+    info)          cmd_info "$@" ;;
+    install|i|add) cmd_install "$@" ;;
+    remove|rm|del) cmd_remove "$@" ;;
+    list|ls)       cmd_list ;;
+    upgrade)       cmd_upgrade ;;
+    *)             usage ;;
+esac

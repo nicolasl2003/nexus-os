@@ -1,0 +1,47 @@
+#!/bin/sh
+# nexusfetch — infos système façon neofetch, pour Nexus OS
+. /etc/os-release
+
+C='\033[1;36m'; B='\033[1m'; R='\033[0m'
+
+up=$(cut -d. -f1 /proc/uptime)
+uptime="$((up / 3600))h $((up % 3600 / 60))min"
+mem=$(awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf "%d Mo / %d Mo", (t-a)/1024, t/1024}' /proc/meminfo)
+cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ *//')
+pkgs=$(ls /usr/local/var/lib/npk/installed 2>/dev/null | wc -l)
+if mountpoint -q /data 2>/dev/null; then
+    disk=$(df -h /data | awk 'NR==2{print $3 " / " $2}')
+else
+    disk="aucune (RAM)"
+fi
+
+i=0
+logo() {
+    case $1 in
+        0) echo "  ███╗   ██╗ " ;;
+        1) echo "  ████╗  ██║ " ;;
+        2) echo "  ██╔██╗ ██║ " ;;
+        3) echo "  ██║╚██╗██║ " ;;
+        4) echo "  ██║ ╚████║ " ;;
+        5) echo "  ██║  ╚███║ " ;;
+        6) echo "  ╚═╝   ╚══╝ " ;;
+        *) echo "             " ;;
+    esac
+}
+
+{
+    printf "%b\n" "${B}$(whoami)@$(hostname)${R}"
+    echo "-------------------"
+    printf "%b\n" "${C}OS${R}        $PRETTY_NAME"
+    printf "%b\n" "${C}Noyau${R}     $(uname -r)"
+    printf "%b\n" "${C}Uptime${R}    $uptime"
+    printf "%b\n" "${C}Paquets${R}   $pkgs (npk)"
+    printf "%b\n" "${C}Shell${R}     BusyBox $(busybox | head -n1 | cut -d' ' -f2)"
+    printf "%b\n" "${C}CPU${R}       $cpu"
+    printf "%b\n" "${C}Mémoire${R}   $mem"
+    printf "%b\n" "${C}Données${R}   $disk"
+} | while IFS= read -r line; do
+    printf "%b%s%b %s\n" "$C" "$(logo $i)" "$R" "$line"
+    i=$((i + 1))
+done
+echo

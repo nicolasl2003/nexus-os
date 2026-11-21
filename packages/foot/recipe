@@ -1,0 +1,11 @@
+NAME=foot
+VERSION=1.20.2
+DEPENDS="fonts-dejavu ncurses-terminfo"
+DESC="Terminal graphique rapide et léger pour Wayland"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    gui_bin foot footclient
+    gui_copy share/foot/themes
+}

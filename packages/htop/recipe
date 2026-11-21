@@ -1,0 +1,23 @@
+NAME=htop
+VERSION=3.4.1
+DEPENDS="ncurses-terminfo"
+DESC="Moniteur de processus interactif (CPU, mémoire, processus)"
+
+. "$PKG_LIB/ncurses.sh"
+
+build() {
+    build_ncurses_sysroot
+    nc="$NCURSES_SYSROOT/usr/local"
+    rm -rf "$WORK/htop-$VERSION"
+    tar -xf "$(fetch "https://github.com/htop-dev/htop/releases/download/$VERSION/htop-$VERSION.tar.xz")" -C "$WORK"
+    cd "$WORK/htop-$VERSION"
+    CC="$MUSL_CC" \
+    CPPFLAGS="-I$nc/include -I$nc/include/ncursesw" \
+    LDFLAGS="-L$nc/lib" \
+        ./configure --prefix="$PREFIX" --enable-static --enable-unicode \
+            --disable-sensors --disable-capabilities --disable-unwind \
+            --disable-delayacct --disable-hwloc >/dev/null
+    make -j"$JOBS" >/dev/null
+    make install-strip DESTDIR="$DESTDIR" >/dev/null
+    rm -rf "$DESTDIR$PREFIX/share"
+}

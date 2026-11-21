@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Paramètres
+Comment=Fond d'écran, couleurs, affichage
+Exec=nexus-settings
+Icon=preferences-system
