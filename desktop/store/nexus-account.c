@@ -3,6 +3,8 @@
  *   nexus-account add <nom>              crée le compte (groupes du bureau inclus)
  *   nexus-account passwd <nom>           change le mot de passe
  *   nexus-account del <nom> keep|wipe    supprime le compte (wipe : et ses fichiers)
+ *   nexus-account verify <nom>           vérifie le mot de passe de l'appelant
+ *                                        (écran verrouillé) : <nom> = soi-même
  *
  * Entrée standard :
  *   ligne 1 : mot de passe d'autorisation (absent si l'appelant est root) ;
@@ -95,6 +97,17 @@ int main(int argc, char **argv)
     if (argc < 3) return fail("Usage : nexus-account add|passwd|del <nom> [keep|wipe]", 2);
     const char *act = argv[1], *name = argv[2];
     bool add = !strcmp(act, "add"), pw = !strcmp(act, "passwd"), del = !strcmp(act, "del");
+    if (!strcmp(act, "verify")) {
+        /* Écran verrouillé : seulement son propre mot de passe, réponse oui/non */
+        struct passwd *me = getpwuid(getuid());
+        if (!me || strcmp(me->pw_name, name)) return fail("On ne peut vérifier que son propre mot de passe.", 2);
+        char pwd[256] = "";
+        read_line(pwd, sizeof pwd);
+        bool ok = hash_ok(name, pwd);
+        explicit_bzero(pwd, sizeof pwd);
+        if (!ok) { sleep(2); return 3; }
+        return 0;
+    }
     if (!add && !pw && !del) return fail("Action inconnue", 2);
     if (!valid_name(name)) return fail("Nom invalide : minuscules, chiffres, - et _ (commence par une lettre).", 2);
     bool wipe = del && argc > 3 && !strcmp(argv[3], "wipe");

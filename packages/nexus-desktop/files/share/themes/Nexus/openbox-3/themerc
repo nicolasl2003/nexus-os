@@ -33,3 +33,16 @@ osd.bg.color: #1b1f2a
 osd.border.color: #1e6fe0
 osd.border.width: 1
 osd.label.text.color: #e6e9ef
+
+# Alt+Tab : grande liste lisible, fenêtre choisie entourée
+osd.window-switcher.width: 620
+osd.window-switcher.padding: 8
+osd.window-switcher.item.padding.x: 12
+osd.window-switcher.item.padding.y: 8
+osd.window-switcher.item.active.border.width: 2
+osd.window-switcher.preview.border.width: 3
+osd.window-switcher.preview.border.color: #1e6fe0,#ffffff,#1e6fe0
+
+# Bureaux virtuels : cases affichées au changement de bureau
+osd.workspace-switcher.boxes.width: 34
+osd.workspace-switcher.boxes.height: 22

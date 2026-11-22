@@ -173,7 +173,7 @@ static void button_bg(cairo_t *cr, double x, double w, int index)
 {
     if (hover != index && pressed != index) return;
     nx_rounded_rect(cr, x, (PANEL_H - BTN_H) / 2.0, w, BTN_H, 8);
-    cairo_set_source_rgba(cr, 1, 1, 1, pressed == index ? 0.16 : 0.10);
+    nx_set(cr, nx_fg(pressed == index ? 0.16 : 0.10));
     cairo_fill(cr);
 }
 
@@ -183,7 +183,7 @@ static void indicator(cairo_t *cr, double cx, int count, bool active)
     double w = active ? 16 : 6;
     nx_rounded_rect(cr, cx - w / 2, PANEL_H - 7, w, 3, 1.5);
     if (active) nx_set(cr, nx_mix(nx_accent_color(), nx_rgb("#ffffff"), 0.3));
-    else cairo_set_source_rgba(cr, 1, 1, 1, 0.55);
+    else nx_set(cr, nx_fg(0.55));
     cairo_fill(cr);
 }
 
@@ -191,7 +191,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
 {
     (void)w;
     nbtns = 0;
-    nx_color white = nx_rgb("#ffffff");
+    nx_color white = nx_fg(1);   /* premier plan (suit le thème) */
 
     /* Fond : verre sombre */
     cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
@@ -199,7 +199,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     cairo_paint(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     cairo_rectangle(cr, 0, 0, width, 1);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.10);
+    nx_set(cr, nx_fg(0.10));
     cairo_fill(cr);
 
     double x = 8;
@@ -213,7 +213,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     add_btn(B_SEARCH, 0, x, BTN_W);
     x += BTN_W + 10;
     cairo_rectangle(cr, x - 6, PANEL_H * 0.27, 1, PANEL_H * 0.46);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.12);
+    nx_set(cr, nx_fg(0.12));
     cairo_fill(cr);
 
     /* Applications épinglées */
@@ -287,7 +287,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
         nx_set(cr, nx_accent_color());
         cairo_fill(cr);
         nx_rounded_rect(cr, width / 2.0 - 30, 4, 60, 4, 2);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.7);
+        nx_set(cr, nx_fg(0.7));
         cairo_fill(cr);
     }
 }

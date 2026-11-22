@@ -207,6 +207,15 @@ static void add_zone(double x, double y, double w, double h, int kind, int index
 
 /* ---------- Dessin ---------- */
 
+/* Couleur de premier plan selon le style des cartes : verre (suit le thème),
+ * clair (foncé), accent ou transparent (blanc) */
+static nx_color wfg(double a)
+{
+    if (nx_conf.widget_style == 1) return nx_alpha(nx_rgb(NX_TEXT), a);
+    if (nx_conf.widget_style == 0) return nx_fg(a);
+    return nx_alpha(nx_rgb("#ffffff"), a);
+}
+
 static const char *jours[] = { "Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi" };
 static const char *mois[] = { "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
                               "août", "septembre", "octobre", "novembre", "décembre" };
@@ -215,7 +224,7 @@ static void ring(cairo_t *cr, double cx, double cy, double r, double pct, nx_col
 {
     cairo_new_path(cr);
     cairo_arc(cr, cx, cy, r, 0, 2 * M_PI);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.08);
+    nx_set(cr, wfg(0.10));
     cairo_set_line_width(cr, 7);
     cairo_stroke(cr);
     cairo_new_path(cr);
@@ -225,7 +234,7 @@ static void ring(cairo_t *cr, double cx, double cy, double r, double pct, nx_col
     cairo_stroke(cr);
     char t[16];
     snprintf(t, sizeof t, "%.0f%%", pct);
-    nx_text(cr, t, 17, true, nx_rgb(NX_GLASS_TEXT), cx - r, cy - 13, 2 * r, 26, NX_CENTER);
+    nx_text(cr, t, 17, true, wfg(1), cx - r, cy - 13, 2 * r, 26, NX_CENTER);
     nx_text(cr, label, 12, false, c, cx - r - 10, cy + r + 6, 2 * r + 20, 18, NX_CENTER);
 }
 
@@ -259,9 +268,11 @@ static void draw_sun_or_moon(cairo_t *cr, double x, double y, double s, bool day
 static void draw_logical(cairo_t *cr)
 {
     nzones = 0;
-    text_c = nx_conf.widget_style == 1 ? nx_rgb(NX_TEXT) : nx_rgb(NX_GLASS_TEXT);
+    text_c = nx_conf.widget_style == 1 ? nx_rgb(NX_TEXT) :
+             nx_conf.widget_style == 0 ? nx_rgb(NX_GLASS_TEXT) : nx_rgb("#eef1f7");
     subtle_c = nx_conf.widget_style == 1 ? nx_rgb(NX_SUBTLE) :
-               nx_conf.widget_style == 2 ? nx_alpha(nx_rgb("#ffffff"), 0.75) : nx_rgb(NX_GLASS_SUBTLE);
+               nx_conf.widget_style == 2 ? nx_alpha(nx_rgb("#ffffff"), 0.75) :
+               nx_conf.widget_style == 0 ? nx_rgb(NX_GLASS_SUBTLE) : nx_rgb("#b9c1d3");
     nx_color text = text_c, subtle = subtle_c, accent = nx_accent_color();
     time_t now = time(NULL);
     struct tm tm;
@@ -276,7 +287,7 @@ static void draw_logical(cairo_t *cr)
     nx_text(cr, hm, 50, true, text, CARD_X + 20, y + 14, 0, 62, NX_LEFT);
     nx_text(cr, date, 13.5, false, subtle, CARD_X + 22, y + 78, 210, 24, NX_LEFT);
     cairo_rectangle(cr, CARD_X + 228, y + 20, 1, ch - 40);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.12);
+    nx_set(cr, wfg(0.12));
     cairo_fill(cr);
     bool day = tm.tm_hour >= 7 && tm.tm_hour < 19;
     const char *hello = tm.tm_hour < 5 ? "Bonne nuit" : tm.tm_hour < 12 ? "Bonjour" :
@@ -363,7 +374,7 @@ static void draw_logical(cairo_t *cr)
     }
     if (adding) {
         nx_rounded_rect(cr, CARD_X + 14, ty + 4, CARD_W - 28, 32, 8);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.08);
+        nx_set(cr, wfg(0.08));
         cairo_fill_preserve(cr);
         nx_set(cr, accent);
         cairo_set_line_width(cr, 1.5);

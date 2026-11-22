@@ -89,6 +89,8 @@ static void config_read(struct nx_config *c, const char *path)
         else if (!strcmp(k, "icon_shape")) c->icon_shape = atoi(v);
         else if (!strcmp(k, "glass_opacity")) c->glass_opacity = atoi(v);
         else if (!strcmp(k, "glass_tint")) c->glass_tint = atoi(v) != 0;
+        else if (!strcmp(k, "theme")) c->theme = atoi(v);
+        else if (!strcmp(k, "lock_minutes")) c->lock_minutes = atoi(v);
     }
     fclose(f);
 }
@@ -111,6 +113,8 @@ void nx_config_load(struct nx_config *c)
     c->icon_shape = 0;
     c->glass_opacity = 1;
     c->glass_tint = false;
+    c->theme = 0;
+    c->lock_minutes = 10;
     config_read(c, "/usr/local/etc/nexus/desktop.conf");   /* réglages système */
     char p[512];
     config_path(p, sizeof p);
@@ -129,6 +133,8 @@ void nx_config_load(struct nx_config *c)
     if (c->icon_style < 0 || c->icon_style > 1) c->icon_style = 0;
     if (c->icon_shape < 0 || c->icon_shape > 2) c->icon_shape = 0;
     if (c->glass_opacity < 0 || c->glass_opacity > 2) c->glass_opacity = 1;
+    if (c->theme < 0 || c->theme > 1) c->theme = 0;
+    if (c->lock_minutes < 0 || c->lock_minutes > 240) c->lock_minutes = 10;
     if (c == &nx_conf) nx_scale = c->text_scale / 100.0;
 }
 
@@ -156,6 +162,7 @@ int nx_config_save(const struct nx_config *c)
     fprintf(f, "panel_height=%d\nmenu_scale=%d\n", c->panel_height, c->menu_scale);
     fprintf(f, "widget_scale=%d\nwidget_style=%d\nwidget_mr=%d\nwidget_mt=%d\n",
             c->widget_scale, c->widget_style, c->widget_mr, c->widget_mt);
+    fprintf(f, "theme=%d\nlock_minutes=%d\n", c->theme, c->lock_minutes);
     fclose(f);
     return rename(tmp, p);
 }
@@ -170,10 +177,21 @@ double nx_icon_factor(void)
     return f[nx_conf.icon_size];
 }
 
+const char *nx_glass_text_hex(void) { return nx_conf.theme == 1 ? "#1b1f2a" : "#eef1f7"; }
+const char *nx_glass_subtle_hex(void) { return nx_conf.theme == 1 ? "#5d6576" : "#9aa3b8"; }
+nx_color nx_fg(double alpha)
+{
+    return nx_conf.theme == 1 ? (nx_color){ 0.106, 0.122, 0.165, alpha } : (nx_color){ 1, 1, 1, alpha };
+}
+
 void nx_glass_source(cairo_t *cr, double y0, double y1)
 {
     static const double alpha[3][2] = { { 0.62, 0.70 }, { 0.86, 0.90 }, { 0.98, 1.0 } };
     nx_color top = { 0.11, 0.13, 0.22, 1 }, bottom = { 0.06, 0.07, 0.13, 1 };
+    if (nx_conf.theme == 1) {                       /* thème clair : verre blanc */
+        top = (nx_color){ 0.97, 0.98, 1.0, 1 };
+        bottom = (nx_color){ 0.91, 0.93, 0.97, 1 };
+    }
     if (nx_conf.glass_tint) {
         nx_color a = nx_accent_color();
         top = nx_mix(top, a, 0.38);
@@ -211,7 +229,8 @@ void nx_glass(cairo_t *cr, double x, double y, double w, double h, double r)
     nx_rounded_rect(cr, x, y, w, h, r);
     nx_glass_source(cr, y, y + h);
     cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.10);
+    if (nx_conf.theme == 1) cairo_set_source_rgba(cr, 0, 0, 0, 0.10);
+    else cairo_set_source_rgba(cr, 1, 1, 1, 0.10);
     cairo_set_line_width(cr, 1);
     cairo_stroke(cr);
 }
@@ -1205,7 +1224,8 @@ static void p_motion(void *d, struct wl_pointer *p, uint32_t t, wl_fixed_t x, wl
 static void p_button(void *d, struct wl_pointer *p, uint32_t serial, uint32_t t,
                      uint32_t button, uint32_t state)
 {
-    (void)d; (void)p; (void)serial; (void)t;
+    (void)d; (void)p; (void)t;
+    nx.serial = serial;
     send_pointer(state == WL_POINTER_BUTTON_STATE_PRESSED ? NX_PRESS : NX_RELEASE, (int)button);
 }
 static void p_axis(void *d, struct wl_pointer *p, uint32_t t, uint32_t axis, wl_fixed_t v)
@@ -1302,7 +1322,8 @@ static void deliver_key(uint32_t key)
 
 static void k_key(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t t, uint32_t key, uint32_t state)
 {
-    (void)d; (void)k; (void)serial; (void)t;
+    (void)d; (void)k; (void)t;
+    nx.serial = serial;
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED) {
         if (key == rep_key) rep_key = 0;
         return;
@@ -1388,6 +1409,14 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
         nx.decorations = wl_registry_bind(r, name, &zxdg_decoration_manager_v1_interface, 1);
     else if (!strcmp(iface, zwlr_foreign_toplevel_manager_v1_interface.name))
         nx.toplevels = wl_registry_bind(r, name, &zwlr_foreign_toplevel_manager_v1_interface, NX_MIN(ver, 3));
+    else if (!strcmp(iface, wl_data_device_manager_interface.name))
+        nx.data_manager = wl_registry_bind(r, name, &wl_data_device_manager_interface, NX_MIN(ver, 3));
+    else if (!strcmp(iface, ext_session_lock_manager_v1_interface.name))
+        nx.lock_manager = wl_registry_bind(r, name, &ext_session_lock_manager_v1_interface, 1);
+    else if (!strcmp(iface, ext_idle_notifier_v1_interface.name))
+        nx.idle_notifier = wl_registry_bind(r, name, &ext_idle_notifier_v1_interface, 1);
+    else if (!strcmp(iface, wl_output_interface.name) && nx.noutputs < 8)
+        nx.outputs[nx.noutputs++] = wl_registry_bind(r, name, &wl_output_interface, 1);
 #undef NX_MIN
 }
 static void reg_remove(void *d, struct wl_registry *r, uint32_t name) { (void)d; (void)r; (void)name; }
@@ -1423,6 +1452,7 @@ bool nx_init(void)
         fprintf(stderr, "Le compositeur ne fournit pas les fonctions de base.\n");
         return false;
     }
+    nx_clipboard_init();
     /* Curseur de souris (thème intégré à libwayland-cursor si aucun thème installé) */
     struct wl_cursor_theme *theme = wl_cursor_theme_load(NULL, 24, nx.shm);
     struct wl_cursor *cur = theme ? wl_cursor_theme_get_cursor(theme, "left_ptr") : NULL;
@@ -1604,7 +1634,7 @@ void nx_spawn(const char *cmd)
  * que la configuration a changé : SIGUSR1 à chacun d'eux. */
 void nx_notify_reload(void)
 {
-    static const char *names[] = { "nexus-wallpaper", "nexus-panel", "nexus-menu", "nexus-widgets" };
+    static const char *names[] = { "nexus-wallpaper", "nexus-panel", "nexus-menu", "nexus-widgets", "nexus-notifyd" };
     DIR *d = opendir("/proc");
     if (!d) return;
     struct dirent *e;
@@ -1866,4 +1896,170 @@ bool nx_match(const char *haystack, const char *needle)
     nx_fold(haystack ? haystack : "", h, sizeof h);
     nx_fold(needle ? needle : "", nd, sizeof nd);
     return strstr(h, nd) != NULL;
+}
+
+/* ===================== Presse-papiers (wl_data_device) =====================
+ * Copier : on devient « propriétaire » de la sélection avec un wl_data_source ;
+ * le compositeur nous demandera le texte (send) quand une autre application
+ * colle. Coller : la sélection courante est un wl_data_offer ; on demande son
+ * texte dans un tube (receive) et on le lit. */
+
+static const char *const text_mimes[] = { "text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "TEXT", "STRING" };
+static char *clip_own;                    /* texte que nous proposons */
+static struct wl_data_source *clip_source;
+static struct wl_data_offer *clip_offer;  /* sélection d'une autre application */
+static char clip_offer_mime[64];
+
+static void src_target(void *d, struct wl_data_source *s, const char *m) { (void)d; (void)s; (void)m; }
+static void src_send(void *d, struct wl_data_source *s, const char *mime, int32_t fd)
+{
+    (void)d; (void)s; (void)mime;
+    if (clip_own) {
+        size_t len = strlen(clip_own), off = 0;
+        while (off < len) {
+            ssize_t w = write(fd, clip_own + off, len - off);
+            if (w <= 0) break;
+            off += w;
+        }
+    }
+    close(fd);
+}
+static void src_cancelled(void *d, struct wl_data_source *s)
+{
+    (void)d;
+    wl_data_source_destroy(s);
+    if (s == clip_source) clip_source = NULL;   /* une autre application a copié */
+}
+static void src_dnd_drop(void *d, struct wl_data_source *s) { (void)d; (void)s; }
+static void src_dnd_finished(void *d, struct wl_data_source *s) { (void)d; (void)s; }
+static void src_action(void *d, struct wl_data_source *s, uint32_t a) { (void)d; (void)s; (void)a; }
+static const struct wl_data_source_listener source_listener = {
+    .target = src_target, .send = src_send, .cancelled = src_cancelled,
+    .dnd_drop_performed = src_dnd_drop, .dnd_finished = src_dnd_finished, .action = src_action,
+};
+
+static void offer_offer(void *d, struct wl_data_offer *o, const char *mime)
+{
+    (void)d;
+    /* garder le meilleur type texte proposé */
+    for (unsigned i = 0; i < sizeof text_mimes / sizeof text_mimes[0]; i++)
+        if (!strcmp(mime, text_mimes[i])) {
+            const char *cur = wl_data_offer_get_user_data(o);
+            int cur_rank = 99;
+            for (unsigned j = 0; cur && j < sizeof text_mimes / sizeof text_mimes[0]; j++)
+                if (!strcmp(cur, text_mimes[j])) cur_rank = j;
+            if ((int)i < cur_rank) wl_data_offer_set_user_data(o, (void *)text_mimes[i]);
+        }
+}
+static void offer_source_actions(void *d, struct wl_data_offer *o, uint32_t a) { (void)d; (void)o; (void)a; }
+static void offer_action(void *d, struct wl_data_offer *o, uint32_t a) { (void)d; (void)o; (void)a; }
+static const struct wl_data_offer_listener offer_listener = {
+    .offer = offer_offer, .source_actions = offer_source_actions, .action = offer_action,
+};
+
+static void dd_data_offer(void *d, struct wl_data_device *dd, struct wl_data_offer *o)
+{
+    (void)d; (void)dd;
+    wl_data_offer_add_listener(o, &offer_listener, NULL);
+}
+static void dd_enter(void *d, struct wl_data_device *dd, uint32_t serial, struct wl_surface *s,
+                     wl_fixed_t x, wl_fixed_t y, struct wl_data_offer *o)
+{ (void)d; (void)dd; (void)serial; (void)s; (void)x; (void)y; (void)o; }
+static void dd_leave(void *d, struct wl_data_device *dd) { (void)d; (void)dd; }
+static void dd_motion(void *d, struct wl_data_device *dd, uint32_t t, wl_fixed_t x, wl_fixed_t y)
+{ (void)d; (void)dd; (void)t; (void)x; (void)y; }
+static void dd_drop(void *d, struct wl_data_device *dd) { (void)d; (void)dd; }
+static void dd_selection(void *d, struct wl_data_device *dd, struct wl_data_offer *o)
+{
+    (void)d; (void)dd;
+    if (clip_offer && clip_offer != o) wl_data_offer_destroy(clip_offer);
+    clip_offer = o;
+    clip_offer_mime[0] = 0;
+    if (o && wl_data_offer_get_user_data(o))
+        snprintf(clip_offer_mime, sizeof clip_offer_mime, "%s", (const char *)wl_data_offer_get_user_data(o));
+}
+static const struct wl_data_device_listener device_listener = {
+    .data_offer = dd_data_offer, .enter = dd_enter, .leave = dd_leave,
+    .motion = dd_motion, .drop = dd_drop, .selection = dd_selection,
+};
+
+void nx_clipboard_init(void)
+{
+    if (!nx.data_manager || !nx.seat || nx.data_device) return;
+    nx.data_device = wl_data_device_manager_get_data_device(nx.data_manager, nx.seat);
+    wl_data_device_add_listener(nx.data_device, &device_listener, NULL);
+}
+
+void nx_clipboard_set(const char *text)
+{
+    if (!text) return;
+    free(clip_own);
+    clip_own = strdup(text);
+    if (!nx.data_device) return;
+    if (clip_source) wl_data_source_destroy(clip_source);
+    clip_source = wl_data_device_manager_create_data_source(nx.data_manager);
+    wl_data_source_add_listener(clip_source, &source_listener, NULL);
+    for (unsigned i = 0; i < sizeof text_mimes / sizeof text_mimes[0]; i++)
+        wl_data_source_offer(clip_source, text_mimes[i]);
+    wl_data_device_set_selection(nx.data_device, clip_source, nx.serial);
+    wl_display_flush(nx.display);
+}
+
+char *nx_clipboard_get(void)
+{
+    if (clip_source && clip_own) return strdup(clip_own);   /* c'est nous qui avons copié */
+    if (!clip_offer) return clip_own ? strdup(clip_own) : NULL;
+    const char *mime = clip_offer_mime[0] ? clip_offer_mime : (const char *)wl_data_offer_get_user_data(clip_offer);
+    if (!mime) return NULL;
+    int fds[2];
+    if (pipe(fds) != 0) return NULL;
+    wl_data_offer_receive(clip_offer, mime, fds[1]);
+    close(fds[1]);
+    wl_display_flush(nx.display);
+    size_t cap = 4096, len = 0;
+    char *buf = malloc(cap);
+    struct pollfd p = { .fd = fds[0], .events = POLLIN };
+    for (;;) {
+        if (poll(&p, 1, 1500) <= 0) break;            /* l'autre application ne répond pas */
+        if (len + 2048 > cap) {
+            if (cap > 16 * 1024 * 1024) break;
+            cap *= 2;
+            buf = realloc(buf, cap);
+        }
+        ssize_t r = read(fds[0], buf + len, cap - len - 1);
+        if (r <= 0) break;
+        len += r;
+    }
+    close(fds[0]);
+    buf[len] = 0;
+    if (!len) { free(buf); return NULL; }
+    return buf;
+}
+
+/* ===================== Écran verrouillé (ext-session-lock) ===================== */
+
+static void lock_surface_configure(void *d, struct ext_session_lock_surface_v1 *s, uint32_t serial,
+                                   uint32_t w, uint32_t h)
+{
+    struct nx_window *win = d;
+    ext_session_lock_surface_v1_ack_configure(s, serial);
+    win->width = w;
+    win->height = h;
+    win->configured = true;
+    win->dirty = true;
+}
+static const struct ext_session_lock_surface_v1_listener lock_surface_listener = {
+    .configure = lock_surface_configure,
+};
+
+struct nx_window *nx_lock_window(struct nx_handlers h, struct ext_session_lock_v1 *lock,
+                                 struct wl_output *output)
+{
+    struct nx_window *w = calloc(1, sizeof *w);
+    w->h = h;
+    w->surface = wl_compositor_create_surface(nx.compositor);
+    w->lock_surface = ext_session_lock_v1_get_lock_surface(lock, w->surface, output);
+    ext_session_lock_surface_v1_add_listener(w->lock_surface, &lock_surface_listener, w);
+    add_window(w);
+    return w;
 }

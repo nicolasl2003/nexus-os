@@ -24,6 +24,8 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "wlr-foreign-toplevel-management-unstable-v1-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
+#include "ext-session-lock-v1-client-protocol.h"
+#include "ext-idle-notify-v1-client-protocol.h"
 
 /* ---------- Couleurs ---------- */
 
@@ -60,6 +62,8 @@ struct nx_config {
     int icon_shape;      /* forme de la pastille : 0 arrondie, 1 carrée, 2 ronde */
     int glass_opacity;   /* barre et menus : 0 transparents, 1 translucides, 2 opaques */
     bool glass_tint;     /* barre et menus teintés de la couleur d'accent */
+    int theme;           /* barre, menu, panneaux : 0 sombre, 1 clair */
+    int lock_minutes;    /* verrouillage après N minutes d'inactivité (0 : jamais) */
 };
 
 struct nx_accent { const char *hex, *name; };
@@ -89,8 +93,13 @@ enum { NX_LEFT, NX_CENTER, NX_RIGHT };
 void nx_rounded_rect(cairo_t *cr, double x, double y, double w, double h, double r);
 /* Panneau "verre" sombre du thème Nexus (fond translucide, liseré, ombre) */
 void nx_glass(cairo_t *cr, double x, double y, double w, double h, double r);
-#define NX_GLASS_TEXT   "#eef1f7"
-#define NX_GLASS_SUBTLE "#9aa3b8"
+/* Texte sur ces surfaces : clair (thème sombre) ou foncé (thème clair) */
+const char *nx_glass_text_hex(void);
+const char *nx_glass_subtle_hex(void);
+#define NX_GLASS_TEXT   nx_glass_text_hex()
+#define NX_GLASS_SUBTLE nx_glass_subtle_hex()
+/* Couleur « premier plan » des surfaces verre (blanc ou presque noir), avec alpha */
+nx_color nx_fg(double alpha);
 /* Texte centré verticalement dans (x,y,w,h), coupé avec "…" si trop long.
  * size en pixels (multipliée par nx_scale). Retourne la largeur dessinée. */
 double nx_text(cairo_t *cr, const char *txt, double size, bool bold, nx_color c,
@@ -145,6 +154,7 @@ struct nx_window {
     struct zwlr_layer_surface_v1 *layer;
     struct xdg_surface *xdg;
     struct xdg_toplevel *toplevel;
+    struct ext_session_lock_surface_v1 *lock_surface;
     int width, height, pending_w, pending_h;
     bool configured, dirty;
     struct nx_buffer bufs[2];
@@ -164,6 +174,13 @@ struct nx_state {
     struct xdg_wm_base *wm_base;
     struct zwlr_foreign_toplevel_manager_v1 *toplevels;
     struct zxdg_decoration_manager_v1 *decorations;
+    struct wl_data_device_manager *data_manager;
+    struct wl_data_device *data_device;
+    struct ext_session_lock_manager_v1 *lock_manager;
+    struct ext_idle_notifier_v1 *idle_notifier;
+    struct wl_output *outputs[8];
+    int noutputs;
+    uint32_t serial;        /* dernier événement clavier/souris (presse-papiers) */
     struct xkb_context *xkb;
     struct xkb_keymap *keymap;
     struct xkb_state *xkb_state;
@@ -186,6 +203,14 @@ struct nx_window *nx_layer_window(struct nx_handlers h, uint32_t layer, uint32_t
                                   uint32_t keyboard, const char *ns);
 struct nx_window *nx_toplevel_window(struct nx_handlers h, const char *title,
                                      const char *app_id, int width, int height);
+/* Surface d'écran verrouillé (ext-session-lock) sur une sortie */
+struct nx_window *nx_lock_window(struct nx_handlers h, struct ext_session_lock_v1 *lock,
+                                 struct wl_output *output);
+
+/* Presse-papiers partagé entre applications (texte UTF-8) */
+void nx_clipboard_init(void);           /* (appelé par nx_init) */
+void nx_clipboard_set(const char *text);
+char *nx_clipboard_get(void);           /* à libérer avec free() ; NULL si vide */
 void nx_redraw(struct nx_window *w);
 void nx_run(void);
 void nx_quit(void);

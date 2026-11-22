@@ -292,6 +292,29 @@ static void check_wifi(void)
     snprintf(wifi_ssid, sizeof wifi_ssid, "%s", ssid);
 }
 
+/* ---- Verrouillage automatique après inactivité (ext-idle-notify) ---- */
+
+static struct ext_idle_notification_v1 *idle_note;
+
+static void on_idled(void *d, struct ext_idle_notification_v1 *n)
+{
+    (void)d; (void)n;
+    nx_spawn("nexus-lock");
+}
+static void on_resumed(void *d, struct ext_idle_notification_v1 *n) { (void)d; (void)n; }
+static const struct ext_idle_notification_v1_listener idle_listener = { .idled = on_idled, .resumed = on_resumed };
+
+static void setup_idle(void)
+{
+    if (idle_note) { ext_idle_notification_v1_destroy(idle_note); idle_note = NULL; }
+    if (!nx.idle_notifier || !nx.seat || nx_conf.lock_minutes <= 0) return;
+    idle_note = ext_idle_notifier_v1_get_idle_notification(nx.idle_notifier,
+                                                           (uint32_t)nx_conf.lock_minutes * 60000u, nx.seat);
+    ext_idle_notification_v1_add_listener(idle_note, &idle_listener, NULL);
+}
+
+static void notifyd_reload(void) { setup_idle(); nx_redraw(win); }
+
 /* ---- Boucle : dossiers 2 fois par seconde, Wi-Fi toutes les 3 s,
  *      batterie toutes les 30 s, disparition des bulles ---- */
 
@@ -325,7 +348,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
         nx_glass(cr, x, y, cw, CARD_H, 14);
         if (hover == i) {
             nx_rounded_rect(cr, x, y, cw, CARD_H, 14);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.06);
+            nx_set(cr, nx_fg(0.06));
             cairo_fill(cr);
         }
         /* liseré d'accent à gauche */
@@ -352,7 +375,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
         if (hover_close == i) {
             cairo_new_path(cr);
             cairo_arc(cr, bx + 11, by + 11, 13, 0, 2 * M_PI);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.15);
+            nx_set(cr, nx_fg(0.15));
             cairo_fill(cr);
         }
         cairo_move_to(cr, bx + 6, by + 6); cairo_line_to(cr, bx + 16, by + 16);
@@ -415,6 +438,8 @@ int notifyd_main(int argc, char **argv)
     next_bat = now_s() + 30;
     nx.timeout = notifyd_timeout;
     nx.tick = notifyd_tick;
+    nx.reload = notifyd_reload;
+    setup_idle();
     nx_run();
     return 0;
 }

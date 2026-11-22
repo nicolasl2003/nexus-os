@@ -264,7 +264,7 @@ static void bars(cairo_t *cr, double x, double y, int signal, bool white)
     for (int i = 0; i < 4; i++) {
         double h = 5 + i * 4;
         nx_rounded_rect(cr, x + i * 6, y + 18 - h, 4, h, 1.5);
-        cairo_set_source_rgba(cr, 1, 1, 1, i < lvl ? (white ? 0.95 : 0.85) : 0.2);
+        nx_set(cr, nx_fg(i < lvl ? (white ? 0.95 : 0.85) : 0.2));
         cairo_fill(cr);
     }
 }
@@ -286,7 +286,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     box(width, height, &bx, &by, &bh);
     nx_glass(cr, bx, by, BOX_W, bh, 16);
     nx_color text = nx_rgb(NX_GLASS_TEXT), subtle = nx_rgb(NX_GLASS_SUBTLE), accent = nx_accent_color();
-    nx_color white = nx_rgb("#ffffff");
+    nx_color white = nx_fg(1);   /* premier plan (suit le thème) */
     nx_text(cr, "Réseau", 16, true, text, bx + 20, by + 16, 0, 24, NX_LEFT);
 
     /* Ethernet */
@@ -295,7 +295,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     bool eth = iface_up("eth0");
     if (eth) iface_ip("eth0", ip, sizeof ip);
     nx_rounded_rect(cr, bx + 14, y, BOX_W - 28, 50, 10);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.06);
+    nx_set(cr, nx_fg(0.06));
     cairo_fill(cr);
     nx_icon(cr, "ethernet", bx + 26, y + 13, 24, nx_alpha(white, eth ? 0.95 : 0.4));
     nx_text(cr, "Ethernet", 14, true, text, bx + 62, y + 5, 200, 22, NX_LEFT);
@@ -321,7 +321,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
         bool cur = !strcmp(nets[i].ssid, cur_ssid) && !strcmp(cur_state, "COMPLETED");
         if (hover == i || selected == i) {
             nx_rounded_rect(cr, bx + 12, y, BOX_W - 24, ROW_H - 4 + (selected == i ? 56 : 0), 10);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.08);
+            nx_set(cr, nx_fg(0.08));
             cairo_fill(cr);
         }
         bars(cr, bx + 24, y + 11, nets[i].signal, cur);
@@ -333,7 +333,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
         if (selected == i) {   /* champ mot de passe + bouton */
             double fx = bx + 24, fw = BOX_W - 160;
             nx_rounded_rect(cr, fx, y, fw, 40, 9);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.08);
+            nx_set(cr, nx_fg(0.08));
             cairo_fill_preserve(cr);
             nx_set(cr, accent);
             cairo_set_line_width(cr, 1.5);

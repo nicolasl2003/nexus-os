@@ -275,6 +275,7 @@ static const struct power powers[] = {
     { "Éteindre", "power", "/usr/local/libexec/nexus-power poweroff" },
     { "Redémarrer", "reboot", "/usr/local/libexec/nexus-power reboot" },
     { "Se déconnecter", "logout", "labwc --exit" },
+    { "Verrouiller", "lock", "nexus-lock" },
 };
 
 /* ======================= Dessin ======================= */
@@ -298,7 +299,8 @@ static void section_header(cairo_t *cr, double x, double y, double w, const char
 {
     nx_text(cr, title, 16, true, nx_rgb(NX_GLASS_TEXT), x, y, 0, 26, NX_LEFT);
     if (!link) return;
-    nx_color a = nx_mix(nx_accent_color(), nx_rgb("#ffffff"), hot(k, 0) ? 0.45 : 0.25);
+    nx_color a = nx_mix(nx_accent_color(), nx_conf.theme ? nx_rgb("#000000") : nx_rgb("#ffffff"),
+                        hot(k, 0) ? 0.45 : 0.25);
     double lw = nx_text_width(cr, link, 13.5, false);
     nx_text(cr, link, 13.5, false, a, x + w - lw - 4, y, 0, 26, NX_LEFT);
     add_rect(x + w - lw - 10, y, lw + 12, 26, k, 0);
@@ -309,12 +311,12 @@ static void draw_list_item(cairo_t *cr, double x, double y, double w, double h, 
 {
     if (is_hot) {
         nx_rounded_rect(cr, x, y, w, h, 9);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.09);
+        nx_set(cr, nx_fg(0.09));
         cairo_fill(cr);
     }
     double is = h - 16;
-    if (icon[0] == '@') nx_app_icon(cr, icon + 1, x + 10, y + 8, is, nx_rgb("#ffffff"));
-    else nx_icon(cr, icon, x + 10, y + 8, is, nx_rgb("#ffffff"));
+    if (icon[0] == '@') nx_app_icon(cr, icon + 1, x + 10, y + 8, is, nx_fg(1));
+    else nx_icon(cr, icon, x + 10, y + 8, is, nx_fg(1));
     if (sub && sub[0]) {
         nx_text(cr, title, 14, false, nx_rgb(NX_GLASS_TEXT), x + is + 22, y + 6, w - is - 30, h / 2 - 4, NX_LEFT);
         nx_text(cr, sub, 12, false, nx_rgb(NX_GLASS_SUBTLE), x + is + 22, y + h / 2, w - is - 30, h / 2 - 6, NX_LEFT);
@@ -329,7 +331,7 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
     nrects = 0;
     add_rect(0, 0, width, height, K_OUTSIDE, 0);
     struct box b = box_of(width, height);
-    nx_color accent = nx_accent_color(), white = nx_rgb("#ffffff");
+    nx_color accent = nx_accent_color(), white = nx_fg(1);
     nx_color text = nx_rgb(NX_GLASS_TEXT), subtle = nx_rgb(NX_GLASS_SUBTLE);
 
     nx_glass(cr, b.x, b.y, b.w, b.h, 16);
@@ -344,7 +346,7 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
     cairo_fill(cr);
     cairo_restore(cr);
     cairo_rectangle(cr, b.x + NAV_W, b.y + 16, 1, b.h - 32);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.08);
+    nx_set(cr, nx_fg(0.08));
     cairo_fill(cr);
     nx_logo(cr, b.x + 22, b.y + 22, 44);
     for (int i = 0; i < NNAV; i++) {
@@ -360,7 +362,7 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
             cairo_pattern_destroy(g);
         } else if (hot(K_NAV, i)) {
             nx_rounded_rect(cr, x, y, nw, 44, 10);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.08);
+            nx_set(cr, nx_fg(0.08));
             cairo_fill(cr);
         }
         nx_icon(cr, navs[i].icon, x + 14, y + 11, 22, white);
@@ -371,7 +373,7 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
     double uy = b.y + b.h - 108;
     if (hot(K_USER, 0)) {
         nx_rounded_rect(cr, b.x + 12, uy, NAV_W - 24, 48, 10);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.08);
+        nx_set(cr, nx_fg(0.08));
         cairo_fill(cr);
     }
     nx_icon(cr, "user", b.x + 22, uy + 7, 34, white);
@@ -390,9 +392,9 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
     /* ---- Barre de recherche ---- */
     double sx = b.cx, sw = b.cw, sh = 48, syy = b.y + 22;
     nx_rounded_rect(cr, sx, syy, sw, sh, 12);
-    cairo_set_source_rgba(cr, 1, 1, 1, search[0] ? 0.10 : 0.06);
+    nx_set(cr, nx_fg(search[0] ? 0.10 : 0.06));
     cairo_fill_preserve(cr);
-    if (search[0]) nx_set(cr, nx_alpha(accent, 0.8)); else cairo_set_source_rgba(cr, 1, 1, 1, 0.12);
+    if (search[0]) nx_set(cr, nx_alpha(accent, 0.8)); else nx_set(cr, nx_fg(0.12));
     cairo_set_line_width(cr, search[0] ? 1.6 : 1);
     cairo_stroke(cr);
     nx_icon(cr, "search", sx + 16, syy + 13, 22, nx_alpha(white, 0.85));
@@ -442,7 +444,7 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
             struct app *a = &apps[pinned[i]];
             if (hot(K_PIN, i)) {
                 nx_rounded_rect(cr, x + 6, cy, cellw - 12, cellh - 6, 12);
-                cairo_set_source_rgba(cr, 1, 1, 1, 0.08);
+                nx_set(cr, nx_fg(0.08));
                 cairo_fill(cr);
             }
             nx_app_icon(cr, app_icon(a) + 1, x + (cellw - isz) / 2, cy + 10, isz, white);
@@ -481,25 +483,25 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
         /* ---- Alimentation ---- */
         section_header(cr, b.cx, y, b.cw, "Alimentation", "←  Retour", K_BACK);
         y += 50;
-        double cw = (b.cw - 2 * 16) / 3, ch = 150;
-        for (int i = 0; i < 3; i++) {
-            double x = b.cx + i * (cw + 16);
+        double cw = (b.cw - 3 * 12) / 4, ch = 150;
+        for (int i = 0; i < 4; i++) {
+            double x = b.cx + i * (cw + 12);
             nx_rounded_rect(cr, x, y, cw, ch, 14);
             if (hot(K_POWER, i)) {
                 if (i == 0) cairo_set_source_rgba(cr, 0.9, 0.3, 0.3, 0.30);
                 else nx_set(cr, nx_alpha(accent, 0.35));
             } else {
-                cairo_set_source_rgba(cr, 1, 1, 1, 0.06);
+                nx_set(cr, nx_fg(0.06));
             }
             cairo_fill_preserve(cr);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.12);
+            nx_set(cr, nx_fg(0.12));
             cairo_set_line_width(cr, 1);
             cairo_stroke(cr);
             nx_icon(cr, powers[i].icon, x + (cw - 46) / 2, y + 30, 46, white);
             nx_text(cr, powers[i].label, 14.5, true, text, x, y + 96, cw, 30, NX_CENTER);
             add_rect(x, y, cw, ch, K_POWER, i);
         }
-        nx_text(cr, "« Se déconnecter » ferme ta session et revient à l'écran de connexion.",
+        nx_text(cr, "« Se déconnecter » ferme ta session · « Verrouiller » (Super+L) protège l'écran.",
                 12.5, false, subtle, b.cx, y + ch + 18, b.cw, 22, NX_LEFT);
     }
 }
@@ -614,7 +616,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
         cairo_move_to(cr, rx - 8 - i * 5, ty + 3);
         cairo_line_to(cr, rx - 3, ty + 8 + i * 5);
     }
-    if (grip_hover || resize_mode) nx_set(cr, a); else cairo_set_source_rgba(cr, 1, 1, 1, 0.35);
+    if (grip_hover || resize_mode) nx_set(cr, a); else nx_set(cr, nx_fg(0.35));
     cairo_stroke(cr);
 }
 

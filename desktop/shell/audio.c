@@ -126,13 +126,13 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     /* bouton muet */
     double mx = bx + 18, my = by + 78;
     nx_rounded_rect(cr, mx, my, 44, 44, 12);
-    cairo_set_source_rgba(cr, 1, 1, 1, hover == 1 ? 0.16 : 0.08);
+    nx_set(cr, nx_fg(hover == 1 ? 0.16 : 0.08));
     cairo_fill(cr);
-    nx_icon(cr, nx_volume_icon(), mx + 10, my + 10, 24, nx_rgb("#ffffff"));
+    nx_icon(cr, nx_volume_icon(), mx + 10, my + 10, 24, nx_fg(1));
     /* curseur */
     double sx = bx + 80, sw = BOX_W - 150, sy = my + 22;
     nx_rounded_rect(cr, sx, sy - 3, sw, 6, 3);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.15);
+    nx_set(cr, nx_fg(0.15));
     cairo_fill(cr);
     double fill = sw * (m ? 0 : v) / 100.0;
     nx_rounded_rect(cr, sx, sy - 3, fmax(fill, 6), 6, 3);

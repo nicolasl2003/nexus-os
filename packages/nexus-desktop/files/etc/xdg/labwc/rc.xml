@@ -17,6 +17,20 @@
 
   <placement><policy>cascade</policy></placement>
 
+  <!-- Bureaux virtuels : 4 espaces de travail (Super+1…4, Ctrl+Alt+flèches) -->
+  <desktops number="4">
+    <prefix>Bureau</prefix>
+    <popupTime>900</popupTime>
+  </desktops>
+
+  <!-- Alt+Tab : liste des fenêtres (leur titre) ; la
+       fenêtre choisie est montrée en avant pendant le choix -->
+  <windowSwitcher show="yes" preview="yes" outlines="yes" allWorkspaces="no">
+    <fields>
+      <field content="title" width="100%" />
+    </fields>
+  </windowSwitcher>
+
   <!-- Aimantation : glisser une fenêtre contre un bord ou dans un coin.
        Haut (centre) = plein écran ; gauche/droite = moitié d'écran ;
        coins = quart d'écran (régions nexus-*, gérées par notre labwc). -->
@@ -47,6 +61,24 @@
     <keybind key="Print"><action name="Execute" command="nexus-screenshot" /></keybind>
     <!-- Ctrl+Maj+Échap : moniteur système -->
     <keybind key="C-S-Escape"><action name="Execute" command="nexus-monitor" /></keybind>
+    <!-- Fenêtres : Alt+Tab (défaut), Alt+Maj+Tab = en arrière, Super+Tab -->
+    <keybind key="A-S-Tab"><action name="PreviousWindow" /></keybind>
+    <keybind key="W-Tab"><action name="NextWindow" /></keybind>
+    <!-- Bureaux virtuels -->
+    <keybind key="C-A-Left"><action name="GoToDesktop" to="left" wrap="yes" /></keybind>
+    <keybind key="C-A-Right"><action name="GoToDesktop" to="right" wrap="yes" /></keybind>
+    <keybind key="C-A-S-Left"><action name="SendToDesktop" to="left" wrap="yes" /></keybind>
+    <keybind key="C-A-S-Right"><action name="SendToDesktop" to="right" wrap="yes" /></keybind>
+    <keybind key="W-1"><action name="GoToDesktop" to="1" /></keybind>
+    <keybind key="W-2"><action name="GoToDesktop" to="2" /></keybind>
+    <keybind key="W-3"><action name="GoToDesktop" to="3" /></keybind>
+    <keybind key="W-4"><action name="GoToDesktop" to="4" /></keybind>
+    <keybind key="W-S-1"><action name="SendToDesktop" to="1" /></keybind>
+    <keybind key="W-S-2"><action name="SendToDesktop" to="2" /></keybind>
+    <keybind key="W-S-3"><action name="SendToDesktop" to="3" /></keybind>
+    <keybind key="W-S-4"><action name="SendToDesktop" to="4" /></keybind>
+    <!-- Super+L : verrouiller l'écran -->
+    <keybind key="W-l"><action name="Execute" command="nexus-lock" /></keybind>
     <!-- Alt+F4 : fermer la fenêtre -->
     <keybind key="A-F4"><action name="Close" /></keybind>
   </keyboard>

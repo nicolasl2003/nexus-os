@@ -273,13 +273,30 @@ static void insert_text(const char *t)
     }
 }
 
-static char *clip;               /* presse-papiers (partagé entre fenêtres : non) */
-
+/* Presse-papiers partagé avec les autres applications (terminal, navigateur…) */
 static void copy_sel(void)
 {
     if (!has_sel()) return;
-    free(clip);
-    clip = sel_text();
+    char *t = sel_text();
+    nx_clipboard_set(t);
+    free(t);
+}
+
+static void paste(void)
+{
+    char *t = nx_clipboard_get();
+    if (!t) { set_status("Le presse-papiers est vide."); return; }
+    /* fins de ligne Windows -> \n ; caractères de contrôle retirés (sauf \t) */
+    char *o = t;
+    for (char *s = t; *s; s++) {
+        if (*s == '\r') continue;
+        if ((unsigned char)*s < 0x20 && *s != '\n' && *s != '\t') continue;
+        *o++ = *s;
+    }
+    *o = 0;
+    before_edit(0);
+    insert_text(t);
+    free(t);
 }
 
 /* ======================= Fichiers ======================= */
@@ -1111,7 +1128,7 @@ static void key(struct nx_window *w, xkb_keysym_t sym, const char *utf8)
         case XKB_KEY_a: case XKB_KEY_A: ay = 0; ax = 0; cy = nl - 1; cx = L[cy].len; selecting = true; break;
         case XKB_KEY_c: case XKB_KEY_C: copy_sel(); break;
         case XKB_KEY_x: case XKB_KEY_X: if (has_sel()) { copy_sel(); before_edit(0); delete_sel(); } break;
-        case XKB_KEY_v: case XKB_KEY_V: if (clip) { before_edit(0); insert_text(clip); } break;
+        case XKB_KEY_v: case XKB_KEY_V: paste(); break;
         case XKB_KEY_z: case XKB_KEY_Z:
             if (shift) restore(redo_stack, &nredo, undo_stack, &nundo);
             else restore(undo_stack, &nundo, redo_stack, &nredo);

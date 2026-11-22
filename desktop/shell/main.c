@@ -24,6 +24,7 @@ int editor_main(int argc, char **argv);
 int calc_main(int argc, char **argv);
 int monitor_main(int argc, char **argv);
 int screenshot_main(int argc, char **argv);
+int lock_main(int argc, char **argv);
 
 static const struct { const char *name; int (*fn)(int, char **); } progs[] = {
     { "panel", panel_main }, { "menu", menu_main },
@@ -32,7 +33,7 @@ static const struct { const char *name; int (*fn)(int, char **); } progs[] = {
     { "greeter", greeter_main }, { "volume", volume_main }, { "network", network_main },
     { "store", store_main }, { "notifyd", notifyd_main }, { "notify", notify_send_main },
     { "assistant", assistant_main }, { "editor", editor_main }, { "calculator", calc_main },
-    { "monitor", monitor_main }, { "screenshot", screenshot_main },
+    { "monitor", monitor_main }, { "screenshot", screenshot_main }, { "lock", lock_main },
 };
 
 int main(int argc, char **argv)

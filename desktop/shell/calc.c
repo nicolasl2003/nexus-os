@@ -385,6 +385,34 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
 
 static void key(struct nx_window *w, xkb_keysym_t sym, const char *utf8)
 {
+    if (nx_mod_ctrl()) {
+        if (sym == XKB_KEY_c || sym == XKB_KEY_C) {
+            char r[64];
+            double v;
+            if (evaluate(expr, &v)) {
+                snprintf(r, sizeof r, "%.12g", v);
+                for (char *c = r; *c; c++) if (*c == '.') *c = ',';
+                nx_clipboard_set(r);
+            }
+        } else if (sym == XKB_KEY_v || sym == XKB_KEY_V) {
+            char *t = nx_clipboard_get();
+            if (t) {
+                just_done = false;
+                /* garder chiffres, opérateurs, parenthèses */
+                for (char *c = t; *c && strlen(expr) < sizeof expr - 4; c++) {
+                    char s[2] = { *c, 0 };
+                    if (isdigit((unsigned char)*c) || strchr("()%,.", *c)) append(*c == '.' ? "," : s);
+                    else if (*c == '+') append(" + ");
+                    else if (*c == '-') append(" − ");
+                    else if (*c == '*' || *c == 'x') append(" × ");
+                    else if (*c == '/') append(" ÷ ");
+                }
+                free(t);
+            }
+        } else return;
+        nx_redraw(w);
+        return;
+    }
     switch (sym) {
     case XKB_KEY_Return: case XKB_KEY_KP_Enter: equals(); break;
     case XKB_KEY_BackSpace: backspace(); break;

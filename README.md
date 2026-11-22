@@ -658,3 +658,34 @@ Toutes dans le menu Démarrer (recherche sans accents : « edit » trouve
 Aussi : répétition des touches maintenues dans toutes nos applications
 (rythme donné par le compositeur), et les nouveaux comptes reçoivent
 Documents, Images et Téléchargements (`/etc/skel`).
+
+## Nexus 0.12 : confort du bureau
+
+- **Copier-coller entre applications** : notre bibliothèque gère maintenant
+  le presse-papiers Wayland (`nx_clipboard_set` / `nx_clipboard_get`,
+  wl_data_device). Éditeur de texte ↔ terminal ↔ navigateur ↔ calculatrice
+  (Ctrl+C copie le résultat, Ctrl+V colle un calcul). Dans le terminal (foot) :
+  Ctrl+Maj+C / Ctrl+Maj+V.
+- **Alt+Tab** : liste des fenêtres du bureau courant (titres), la fenêtre
+  choisie est montrée en avant et encadrée. Alt+Maj+Tab = en arrière,
+  Super+Tab aussi. Le terminal s'appelle « Terminal » (`etc/xdg/foot/foot.ini`).
+- **Bureaux virtuels** : 4 bureaux. Ctrl+Alt+← / → pour changer, Super+1…4
+  pour aller directement, Ctrl+Alt+Maj+← / → ou Super+Maj+1…4 pour y envoyer
+  la fenêtre active. Un indicateur (4 cases) s'affiche au changement.
+- **Verrouillage de l'écran** (`nexus-lock`, `desktop/shell/lock.c`) :
+  Super+L, menu Démarrer → Alimentation → Verrouiller, ou automatiquement
+  après 5 / 10 / 30 minutes sans activité (Paramètres → Verrouillage ;
+  10 min par défaut, détecté par `nexus-notifyd` via ext-idle-notify).
+  Protocole ext-session-lock : labwc n'affiche plus que l'écran verrouillé,
+  même si le programme plantait. Mot de passe vérifié par
+  `nexus-account verify` (setuid, uniquement son propre compte, 2 s d'attente
+  après une erreur).
+- **Thème clair** (Paramètres → Thème) : barre des tâches, menu Démarrer,
+  widgets (style « sombres » = suivent le thème), bulles de notification,
+  panneaux Son et Réseau, menus de labwc, Alt+Tab et barres de titre
+  inactives. Couleurs centralisées dans `nexus-ui` (`nx_fg`,
+  `NX_GLASS_TEXT`/`NX_GLASS_SUBTLE` selon `theme` dans desktop.conf).
+
+Testé dans une VM vierge : copier-coller éditeur → terminal et calculatrice →
+éditeur, Alt+Tab, changement de bureau, verrouillage (mauvais puis bon mot de
+passe, et automatique après 5 min), thème clair.

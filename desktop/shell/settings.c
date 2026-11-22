@@ -33,13 +33,13 @@
 #define SIDE_W   214
 #define PAD      30
 
-enum { SEC_WALL, SEC_COLORS, SEC_PANEL, SEC_ICONS, SEC_WIDGETS, SEC_DISPLAY, SEC_KEYBOARD,
-       SEC_ACCOUNTS, SEC_ABOUT, SEC_COUNT };
+enum { SEC_WALL, SEC_COLORS, SEC_THEME, SEC_PANEL, SEC_ICONS, SEC_WIDGETS, SEC_DISPLAY, SEC_LOCK,
+       SEC_KEYBOARD, SEC_ACCOUNTS, SEC_ABOUT, SEC_COUNT };
 static const struct { const char *label, *icon; } sections[SEC_COUNT] = {
     { "Fond d'écran", "image" },     { "Couleurs", "palette" },
-    { "Barre et menu", "panel" },    { "Icônes", "apps" },
+    { "Thème", "display" },          { "Barre et menu", "panel" },    { "Icônes", "apps" },
     { "Widgets", "monitor" },        { "Affichage", "display" },
-    { "Clavier", "keyboard" },       { "Comptes", "user" },           { "À propos", "info" },
+    { "Verrouillage", "lock" },      { "Clavier", "keyboard" },       { "Comptes", "user" },           { "À propos", "info" },
 };
 static int section = SEC_WALL;
 
@@ -47,7 +47,7 @@ static int section = SEC_WALL;
 
 enum kind { K_NAV, K_WALL, K_ACCENT, K_SCALE, K_TOGGLE, K_PANEL, K_ISIZE, K_ISTYLE, K_ISHAPE,
             K_OPACITY, K_TINT, K_MENU, K_WSIZE, K_WSTYLE, K_WRESET,
-            K_ACC_ADD, K_ACC_PW, K_ACC_DEL, K_DLG_FIELD, K_DLG_OK, K_DLG_CANCEL, K_DLG_WIPE, K_KB };
+            K_ACC_ADD, K_ACC_PW, K_ACC_DEL, K_DLG_FIELD, K_DLG_OK, K_DLG_CANCEL, K_DLG_WIPE, K_KB, K_THEME, K_LOCKDELAY, K_LOCKNOW };
 struct rect { double x, y, w, h; enum kind kind; int index; };
 static struct rect rects[96];
 static int nrects;
@@ -203,6 +203,18 @@ static void apply_window_theme(void)
     fprintf(f, "menu.items.active.bg.color: %s\n", nx_conf.accent);
     fprintf(f, "menu.border.color: %s\n", nx_conf.accent);
     fprintf(f, "osd.border.color: %s\n", nx_conf.accent);
+    fprintf(f, "osd.window-switcher.preview.border.color: %s,#ffffff,%s\n", nx_conf.accent, nx_conf.accent);
+    bool light = nx_conf.theme == 1;
+    fprintf(f, "# Thème %s\n", light ? "clair" : "sombre");
+    fprintf(f, "window.inactive.title.bg.color: %s\n", light ? "#e4e8ef" : "#2a2f3b");
+    fprintf(f, "window.inactive.border.color: %s\n", light ? "#d0d5de" : "#2a2f3b");
+    fprintf(f, "window.inactive.label.text.color: %s\n", light ? "#5d6576" : "#a0a8b8");
+    fprintf(f, "window.inactive.button.unpressed.image.color: %s\n", light ? "#5d6576" : "#a0a8b8");
+    fprintf(f, "menu.items.bg.color: %s\n", light ? "#f7f8fb" : "#1b1f2a");
+    fprintf(f, "menu.items.text.color: %s\n", light ? "#1b1f2a" : "#e6e9ef");
+    fprintf(f, "menu.separator.color: %s\n", light ? "#d0d5de" : "#3a4050");
+    fprintf(f, "osd.bg.color: %s\n", light ? "#f7f8fb" : "#1b1f2a");
+    fprintf(f, "osd.label.text.color: %s\n", light ? "#1b1f2a" : "#e6e9ef");
     fclose(f);
     /* labwc relit sa configuration et son thème quand il reçoit SIGHUP */
     const char *pid = getenv("LABWC_PID");
@@ -284,6 +296,27 @@ static void draw_wallpapers(cairo_t *cr, double x0, double cw)
         add_rect(cx - 24, cy - 24, 48, 48, K_WALL, i);
         j++;
     }
+}
+
+/* Paragraphe découpé en lignes */
+static void para_text(cairo_t *cr, const char *txt, double x, double y, double w)
+{
+    char line[400] = "", word[96];
+    const char *p = txt;
+    while (*p) {
+        size_t n = strcspn(p, " ");
+        snprintf(word, sizeof word, "%.*s", (int)n, p);
+        p += n;
+        while (*p == ' ') p++;
+        char test[500];
+        snprintf(test, sizeof test, "%s%s%s", line, line[0] ? " " : "", word);
+        if (line[0] && nx_text_width(cr, test, 12.5, false) > w) {
+            nx_text(cr, line, 12.5, false, nx_rgb(NX_SUBTLE), x, y, w, 20, NX_LEFT);
+            y += 20;
+            snprintf(line, sizeof line, "%s", word);
+        } else snprintf(line, sizeof line, "%s", test);
+    }
+    if (line[0]) nx_text(cr, line, 12.5, false, nx_rgb(NX_SUBTLE), x, y, w, 20, NX_LEFT);
 }
 
 /* Carte de choix (bordure d'accent si choisie, coche en haut à droite) */
@@ -940,6 +973,63 @@ static void draw_about(cairo_t *cr, double x0, double cw)
     (void)pretty_name;
 }
 
+/* ---------- Thème ---------- */
+
+static void draw_theme_section(cairo_t *cr, double x0, double cw)
+{
+    section_title(cr, x0, "Thème", "Barre des tâches, menu Démarrer, notifications et panneaux.");
+    static const char *names[] = { "Sombre", "Clair" };
+    double gap = 16, w2 = (cw - gap) / 2, y = 100, h = 230;
+    for (int i = 0; i < 2; i++) {
+        double x = x0 + i * (w2 + gap);
+        choice_card(cr, x, y, w2, h, K_THEME, i, nx_conf.theme == i, names[i]);
+        /* aperçu : fond d'écran, menu et barre dans ce thème */
+        int saved = nx_conf.theme;
+        nx_conf.theme = i;
+        double px = x + 14, py = y + 14, pw = w2 - 28, ph = h - 62;
+        cairo_save(cr);
+        nx_rounded_rect(cr, px, py, pw, ph, 8);
+        cairo_clip(cr);
+        cairo_translate(cr, px, py);
+        nx_draw_wallpaper_cached(cr, nx_conf.wallpaper, pw, ph);
+        cairo_restore(cr);
+        cairo_save(cr);
+        nx_rounded_rect(cr, px, py, pw, ph, 8);
+        cairo_clip(cr);
+        nx_glass(cr, px + 10, py + 14, pw * 0.55, ph - 52, 8);
+        nx_text(cr, "Menu", 11, true, nx_rgb(NX_GLASS_TEXT), px + 20, py + 22, 80, 18, NX_LEFT);
+        for (int k = 0; k < 3; k++) {
+            nx_rounded_rect(cr, px + 20, py + 48 + k * 22, pw * 0.55 - 20 - (k == 1 ? 30 : 0), 10, 5);
+            nx_set(cr, nx_fg(0.25));
+            cairo_fill(cr);
+        }
+        mini_panel(cr, px, py + ph - 28, pw, 28);
+        cairo_restore(cr);
+        nx_conf.theme = saved;
+    }
+    para_text(cr, "Les fenêtres des applications (Fichiers, Paramètres…) restent claires ; le thème change "
+                  "la barre, le menu, les bulles de notification, les panneaux Son et Réseau, les menus "
+                  "et Alt+Tab.", x0, y + h + 20, cw);
+}
+
+/* ---------- Verrouillage ---------- */
+
+static const int lock_delays[] = { 0, 5, 10, 30 };
+
+static void draw_lock_section(cairo_t *cr, double x0, double cw)
+{
+    section_title(cr, x0, "Verrouillage", "Protéger l'écran quand tu t'absentes.");
+    nx_text(cr, "Verrouiller automatiquement après", 14, true, nx_rgb(NX_TEXT), x0, 100, 0, 24, NX_LEFT);
+    static const char *names[] = { "Jamais", "5 minutes", "10 minutes", "30 minutes" };
+    double gap = 10, w4 = (cw - 3 * gap) / 4;
+    for (int i = 0; i < 4; i++)
+        choice_card(cr, x0 + i * (w4 + gap), 132, w4, 70, K_LOCKDELAY, i, nx_conf.lock_minutes == lock_delays[i], names[i]);
+    nx_text(cr, "… sans toucher au clavier ni à la souris.", 12.5, false, nx_rgb(NX_SUBTLE), x0, 210, cw, 22, NX_LEFT);
+    button_row(cr, x0, 252, "Verrouiller maintenant", K_LOCKNOW);
+    para_text(cr, "Raccourci : Super+L (touche Windows + L), ou menu Démarrer → Alimentation → Verrouiller. "
+                  "Pour déverrouiller, tape le mot de passe de ton compte.", x0, 310, cw);
+}
+
 /* ---------- Clavier ---------- */
 
 /* Même liste que /usr/sbin/nexus-keymap (id, disposition XKB, variante, nom) */
@@ -1046,7 +1136,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     nx_icon(cr, "settings", 22, 22, 34, nx_rgb(NX_TEXT));
     nx_text(cr, "Paramètres", 16, true, nx_rgb(NX_TEXT), 64, 22, SIDE_W - 70, 34, NX_LEFT);
     for (int i = 0; i < SEC_COUNT; i++) {
-        double y = 84 + i * 48;
+        double y = 78 + i * 45;
         bool sel = i == section;
         if (sel || is_hover(K_NAV, i)) {
             nx_rounded_rect(cr, 10, y, SIDE_W - 20, 42, 8);
@@ -1073,6 +1163,8 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     case SEC_ACCOUNTS: draw_accounts_section(cr, x0, cw); break;
     case SEC_DISPLAY: draw_display(cr, x0, cw); break;
     case SEC_KEYBOARD: draw_keyboard_section(cr, x0, cw); break;
+    case SEC_THEME: draw_theme_section(cr, x0, cw); break;
+    case SEC_LOCK: draw_lock_section(cr, x0, cw); break;
     case SEC_ABOUT: draw_about(cr, x0, cw); break;
     }
     if (dlg) draw_account_dialog(cr, width, height);
@@ -1118,6 +1210,9 @@ static void click(struct rect *r)
     case K_DLG_OK: dialog_submit(); break;
     case K_DLG_CANCEL: close_dialog(); break;
     case K_KB: set_keyboard(r->index); break;
+    case K_THEME: nx_conf.theme = r->index; apply(); apply_window_theme(); break;
+    case K_LOCKDELAY: nx_conf.lock_minutes = lock_delays[r->index]; apply(); break;
+    case K_LOCKNOW: nx_spawn("nexus-lock"); break;
     case K_ISIZE: nx_conf.icon_size = r->index; apply(); break;
     case K_ISTYLE: nx_conf.icon_style = r->index; apply(); break;
     case K_ISHAPE: nx_conf.icon_shape = r->index; nx_conf.icon_style = 0; apply(); break;
@@ -1200,6 +1295,8 @@ int settings_main(int argc, char **argv)
         else if (!strcmp(argv[i], "--widgets")) section = SEC_WIDGETS;
         else if (!strcmp(argv[i], "--accounts")) section = SEC_ACCOUNTS;
         else if (!strcmp(argv[i], "--keyboard")) section = SEC_KEYBOARD;
+        else if (!strcmp(argv[i], "--theme")) section = SEC_THEME;
+        else if (!strcmp(argv[i], "--lock")) section = SEC_LOCK;
         else if (!strcmp(argv[i], "--about")) section = SEC_ABOUT;
     }
     if (!nx_init()) return 1;
