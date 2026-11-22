@@ -8,6 +8,8 @@
  *   nexus-pkg remove <paquet>...         npk remove ...
  *   nexus-pkg alpine-update|alpine-upgrade|alpine-install|alpine-remove ...
  *                                        mêmes actions sur les paquets Alpine
+ *   nexus-pkg parefeu on|off|ssh-on|ssh-off|ping-on|ping-off
+ *                                        réglages du pare-feu (Paramètres → Sécurité)
  *
  * Sécurité :
  *   - un utilisateur autre que root doit fournir le mot de passe
@@ -66,6 +68,24 @@ int main(int argc, char **argv)
         return 2;
     }
     const char *act = argv[1];
+    if (!strcmp(act, "parefeu")) {
+        static const char *ok[] = { "on", "off", "ssh-on", "ssh-off", "ping-on", "ping-off" };
+        bool valid = false;
+        for (unsigned i = 0; argc == 3 && i < sizeof ok / sizeof ok[0]; i++) valid |= !strcmp(argv[2], ok[i]);
+        if (!valid) { fprintf(stderr, "nexus-pkg : réglage du pare-feu inconnu\n"); return 2; }
+        if (getuid() != 0 && !check_password()) {
+            sleep(2);
+            fprintf(stderr, "Mot de passe administrateur incorrect\n");
+            return 3;
+        }
+        if (setgid(0) != 0 || setuid(0) != 0) { perror("nexus-pkg"); return 1; }
+        clearenv();
+        setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin", 1);
+        char *a[] = { "nexus-parefeu", "set", argv[2], NULL };
+        execv("/usr/local/sbin/nexus-parefeu", a);
+        perror("nexus-pkg : nexus-parefeu");
+        return 1;
+    }
     bool alpine = !strncmp(act, "alpine-", 7);   /* paquets Alpine (npk alpine ...) */
     const char *sub = alpine ? act + 7 : act;
     bool with_names = !strcmp(sub, "install") || !strcmp(sub, "remove");

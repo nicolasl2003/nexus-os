@@ -233,9 +233,17 @@ try_repo() {
 }
 
 cmd_update() {
+    _refused=no
     for _u in $REPO_URLS; do
-        try_repo "$_u" && return 0
+        try_repo "$_u"
+        case $? in
+            0) return 0 ;;
+            2) _refused=yes ;;
+        esac
     done
+    if [ "$_refused" = yes ]; then
+        die "aucun dépôt utilisable : ceux qui répondent ont été refusés (voir ci-dessus). Ton index actuel est conservé."
+    fi
     die "aucun dépôt joignable ($REPO_URLS) : vérifie la connexion à Internet"
 }
 

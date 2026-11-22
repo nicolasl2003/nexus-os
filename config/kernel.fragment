@@ -65,3 +65,30 @@ CONFIG_MAC80211_HWSIM=m
 
 # Espaces de noms utilisateur : bac à sable (sandbox) de Firefox et autres navigateurs
 CONFIG_USER_NS=y
+
+# ---- Sécurité (Nexus 0.14) ----
+# Pare-feu nftables (outil nft, paquet parefeu) : filtrage IPv4/IPv6 avec
+# suivi des connexions (« laisser revenir les réponses à ce que j'ai demandé »)
+CONFIG_NETFILTER_ADVANCED=y
+CONFIG_NF_CONNTRACK=y
+CONFIG_NF_TABLES=y
+CONFIG_NF_TABLES_INET=y
+CONFIG_NF_TABLES_IPV4=y
+CONFIG_NF_TABLES_IPV6=y
+CONFIG_NFT_CT=y
+CONFIG_NFT_LOG=y
+CONFIG_NFT_LIMIT=y
+CONFIG_NFT_REJECT=y
+CONFIG_NFT_REJECT_INET=y
+CONFIG_NF_REJECT_IPV4=y
+CONFIG_NF_REJECT_IPV6=y
+CONFIG_NF_LOG_SYSLOG=y
+# Yama : un programme ne peut plus espionner (ptrace) un autre programme
+# qui n'est pas son enfant (protège les mots de passe tapés ailleurs)
+CONFIG_SECURITY=y
+CONFIG_SECURITY_YAMA=y
+# Copies noyau <-> programmes vérifiées (bloque une famille de failles)
+CONFIG_HARDENED_USERCOPY=y
+# Pas d'accès direct à la mémoire physique ni à la mémoire du noyau
+CONFIG_STRICT_DEVMEM=y
+CONFIG_IO_STRICT_DEVMEM=y

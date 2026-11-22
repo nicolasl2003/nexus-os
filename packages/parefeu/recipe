@@ -1,0 +1,14 @@
+NAME=parefeu
+VERSION=1.1.1
+DEPENDS=""
+DESC="Pare-feu de Nexus OS (nftables) : bloque les connexions entrantes non demandées"
+
+. "$PKG_LIB/gui.sh"
+
+build() {
+    # nft (nftables 1.1.1, statique, compilé par 'make gui-stack')
+    gui_copy sbin/nft
+    strip "$DESTDIR$PREFIX/sbin/nft"
+    cp -a "$RECIPE_DIR/files/." "$DESTDIR$PREFIX/"
+    chmod 755 "$DESTDIR$PREFIX/sbin/nexus-parefeu" "$DESTDIR$PREFIX/etc/init.d/S08parefeu"
+}

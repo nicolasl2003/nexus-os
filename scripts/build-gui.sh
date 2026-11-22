@@ -408,11 +408,34 @@ b_netsurf() {
     done
 }
 
+b_libmnl() {
+    # Pare-feu (nftables) : bibliothèque de communication netlink
+    unpack libmnl https://www.netfilter.org/projects/libmnl/files/libmnl-1.0.5.tar.bz2
+    autotools_build libmnl
+}
+b_libnftnl() {
+    unpack libnftnl https://www.netfilter.org/projects/libnftnl/files/libnftnl-1.2.8.tar.xz
+    autotools_build libnftnl
+}
+b_nftables() {
+    # nft : l'outil du pare-feu, entièrement statique (mini-gmp intégré,
+    # sans readline ni JSON)
+    unpack nftables https://www.netfilter.org/projects/nftables/files/nftables-1.1.1.tar.xz
+    ./configure --prefix=/usr/local --disable-shared --enable-static --with-mini-gmp \
+        --without-cli --without-json --disable-man-doc --disable-python \
+        >"$BLD/nftables.log" 2>&1 || { tail -30 "$BLD/nftables.log"; exit 1; }
+    # libtool : « -all-static » = binaire sans aucune bibliothèque partagée
+    make -j"$JOBS" LDFLAGS="-L$P/lib -all-static" >>"$BLD/nftables.log" 2>&1 ||
+        { grep -E 'error|undefined' "$BLD/nftables.log" | head -30; exit 1; }
+    make install DESTDIR="$SYSROOT" >>"$BLD/nftables.log" 2>&1
+    rm -f "$P"/lib/*.la
+}
+
 STEPS="zlib libpng expat freetype fontconfig pixman libffi pcre2 glib cairo fribidi harfbuzz pango libxml2
        wayland wayland_protocols libxkbcommon xkeyboard_config libdrm mtdev libevdev libudev_zero
        libinput seatd libdisplay_info wlroots labwc tllist fcft foot xcompose fonts
        alsa_lib alsa_utils libnl wpa_supplicant hostapd regdb
-       openssl curl libjpeg netsurf alpine_keys"
+       openssl curl libjpeg netsurf alpine_keys libmnl libnftnl nftables"
 
 # Reconstruction forcée d'un composant : build-gui.sh <composant>
 if [ $# -gt 0 ]; then

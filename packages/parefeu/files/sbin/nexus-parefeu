@@ -1,0 +1,92 @@
+#!/bin/sh
+# nexus-parefeu — le pare-feu de Nexus OS (nftables)
+#
+#   nexus-parefeu start | stop | status     (service « parefeu »)
+#   nexus-parefeu set on|off                activer / désactiver
+#   nexus-parefeu set ssh-on|ssh-off        autoriser la connexion à distance (SSH, port 22)
+#   nexus-parefeu set ping-on|ping-off      répondre au ping
+#   nexus-parefeu show                      règles en vigueur
+#
+# Principe : tout ce qui ARRIVE sans avoir été demandé est refusé ; ce que
+# l'ordinateur demande lui-même (pages web, mises à jour…) revient normalement
+# grâce au suivi des connexions. Les sorties ne sont pas filtrées.
+# Choix enregistrés dans /usr/local/etc/nexus/parefeu.conf (ACTIF, SSH, PING).
+
+umask 022
+CONF=/usr/local/etc/nexus/parefeu.conf
+STATE=/run/nexus-parefeu.etat          # lisible par tous : « actif » ou « inactif »
+NFT=/usr/local/sbin/nft
+ACTIF=1; SSH=0; PING=1
+[ -f "$CONF" ] && . "$CONF"
+
+die() { printf 'nexus-parefeu : %s\n' "$*" >&2; exit 1; }
+
+rules() {
+    cat <<RULES
+table inet nexus {
+    chain entree {
+        type filter hook input priority 0; policy drop;
+        ct state established,related accept       # réponses à nos demandes
+        ct state invalid drop
+        iif lo accept                              # l'ordinateur lui-même
+        meta l4proto ipv6-icmp accept              # indispensable à IPv6
+        ip protocol icmp icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+$( [ "$PING" = 1 ] && echo '        ip protocol icmp icmp type echo-request limit rate 5/second accept' )
+        udp sport 67 udp dport 68 accept           # adresse IP (DHCP)
+        udp sport 547 udp dport 546 accept         # DHCPv6
+$( [ "$SSH" = 1 ] && echo '        tcp dport 22 ct state new limit rate 10/minute accept   # SSH' )
+        limit rate 6/minute log prefix "pare-feu: refusé " level info
+    }
+    chain transit {
+        type filter hook forward priority 0; policy drop;
+    }
+}
+RULES
+}
+
+apply() {
+    [ -x "$NFT" ] || die "nft absent"
+    "$NFT" delete table inet nexus 2>/dev/null
+    if [ "$ACTIF" = 1 ]; then
+        rules | "$NFT" -f - || { echo inactif > "$STATE"; die "règles refusées par le noyau"; }
+        echo actif > "$STATE"
+    else
+        echo inactif > "$STATE"
+    fi
+    chmod 644 "$STATE"
+}
+
+save() {
+    mkdir -p "$(dirname "$CONF")"
+    printf '# Pare-feu (modifié par Paramètres → Sécurité ou nexus-parefeu set)\nACTIF=%s\nSSH=%s\nPING=%s\n' \
+        "$ACTIF" "$SSH" "$PING" > "$CONF"
+    chmod 644 "$CONF"            # lisible par Paramètres (pas de secret dedans)
+}
+
+need_root() { [ "$(id -u)" = 0 ] || die "lance cette commande en root (su -c 'nexus-parefeu $*')"; }
+
+case "${1:-status}" in
+    start) need_root start; apply
+           [ "$ACTIF" = 1 ] && echo "parefeu : actif (entrées non demandées refusées$( [ "$SSH" = 1 ] && echo ', SSH autorisé'))" \
+                            || echo "parefeu : désactivé" ;;
+    stop)  need_root stop; "$NFT" delete table inet nexus 2>/dev/null; echo inactif > "$STATE"; echo "parefeu : arrêté" ;;
+    status)
+        if [ "$(cat "$STATE" 2>/dev/null)" = actif ]; then
+            echo "parefeu : actif (SSH : $( [ "$SSH" = 1 ] && echo autorisé || echo bloqué ), ping : $( [ "$PING" = 1 ] && echo oui || echo non ))"
+            exit 0
+        fi
+        echo "parefeu : inactif"; exit 1 ;;
+    show)  need_root show; "$NFT" list table inet nexus ;;
+    set)
+        need_root set
+        case "${2:-}" in
+            on) ACTIF=1 ;; off) ACTIF=0 ;;
+            ssh-on) SSH=1 ;; ssh-off) SSH=0 ;;
+            ping-on) PING=1 ;; ping-off) PING=0 ;;
+            *) die "usage : nexus-parefeu set on|off|ssh-on|ssh-off|ping-on|ping-off" ;;
+        esac
+        save; apply
+        logger -t parefeu "réglage : $2" 2>/dev/null
+        "$0" status ;;
+    *) die "usage : nexus-parefeu start|stop|status|show|set …" ;;
+esac

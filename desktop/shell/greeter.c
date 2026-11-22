@@ -49,9 +49,14 @@ static void load_accounts(void)
         naccounts++;
     }
     endpwent();
-    snprintf(accounts[naccounts].name, 64, "root");
-    snprintf(accounts[naccounts].label, 64, "Administrateur");
-    naccounts++;
+    /* Sécurité : pas de session graphique en root. L'administrateur reste
+     * utilisable (su, demandes de mot de passe) ; il n'apparaît ici que s'il
+     * n'y a aucun autre compte (mode live) */
+    if (naccounts == 0) {
+        snprintf(accounts[naccounts].name, 64, "root");
+        snprintf(accounts[naccounts].label, 64, "Administrateur");
+        naccounts++;
+    }
     /* Présélectionner le dernier compte utilisé */
     FILE *f = fopen(LAST_USER, "r");
     if (f) {

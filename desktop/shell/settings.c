@@ -34,12 +34,13 @@
 #define PAD      30
 
 enum { SEC_WALL, SEC_COLORS, SEC_THEME, SEC_PANEL, SEC_ICONS, SEC_WIDGETS, SEC_DISPLAY, SEC_LOCK,
-       SEC_KEYBOARD, SEC_ACCOUNTS, SEC_ABOUT, SEC_COUNT };
+       SEC_SECURITY, SEC_KEYBOARD, SEC_ACCOUNTS, SEC_ABOUT, SEC_COUNT };
 static const struct { const char *label, *icon; } sections[SEC_COUNT] = {
     { "Fond d'écran", "image" },     { "Couleurs", "palette" },
     { "Thème", "display" },          { "Barre et menu", "panel" },    { "Icônes", "apps" },
     { "Widgets", "monitor" },        { "Affichage", "display" },
-    { "Verrouillage", "lock" },      { "Clavier", "keyboard" },       { "Comptes", "user" },           { "À propos", "info" },
+    { "Verrouillage", "lock" },      { "Sécurité", "lock" },
+    { "Clavier", "keyboard" },       { "Comptes", "user" },           { "À propos", "info" },
 };
 static int section = SEC_WALL;
 
@@ -47,7 +48,8 @@ static int section = SEC_WALL;
 
 enum kind { K_NAV, K_WALL, K_ACCENT, K_SCALE, K_TOGGLE, K_PANEL, K_ISIZE, K_ISTYLE, K_ISHAPE,
             K_OPACITY, K_TINT, K_MENU, K_WSIZE, K_WSTYLE, K_WRESET,
-            K_ACC_ADD, K_ACC_PW, K_ACC_DEL, K_DLG_FIELD, K_DLG_OK, K_DLG_CANCEL, K_DLG_WIPE, K_KB, K_THEME, K_LOCKDELAY, K_LOCKNOW };
+            K_ACC_ADD, K_ACC_PW, K_ACC_DEL, K_DLG_FIELD, K_DLG_OK, K_DLG_CANCEL, K_DLG_WIPE, K_KB, K_THEME, K_LOCKDELAY, K_LOCKNOW,
+            K_FW, K_SEC_OK, K_SEC_CANCEL, K_SEC_BG };
 struct rect { double x, y, w, h; enum kind kind; int index; };
 static struct rect rects[96];
 static int nrects;
@@ -1030,6 +1032,175 @@ static void draw_lock_section(cairo_t *cr, double x0, double cw)
                   "Pour déverrouiller, tape le mot de passe de ton compte.", x0, 310, cw);
 }
 
+/* ---------- Sécurité ---------- */
+
+#define PKG_HELPER "/usr/local/libexec/nexus-pkg"
+static bool fw_installed, fw_active, fw_ssh, fw_ping = true;
+static char sec_action[16];          /* réglage en attente du mot de passe */
+static char sec_pw[128], sec_msg[200];
+static bool sec_dlg;
+
+static void load_firewall(void)
+{
+    fw_installed = access("/usr/local/sbin/nexus-parefeu", X_OK) == 0;
+    char st[32] = "";
+    FILE *f = fopen("/run/nexus-parefeu.etat", "r");
+    if (f) { if (fgets(st, sizeof st, f)) st[strcspn(st, "\n")] = 0; fclose(f); }
+    fw_active = !strcmp(st, "actif");
+    fw_ssh = false;
+    fw_ping = true;
+    if ((f = fopen("/usr/local/etc/nexus/parefeu.conf", "r"))) {
+        char line[64];
+        while (fgets(line, sizeof line, f)) {
+            if (!strncmp(line, "SSH=", 4)) fw_ssh = line[4] == '1';
+            if (!strncmp(line, "PING=", 5)) fw_ping = line[5] == '1';
+        }
+        fclose(f);
+    }
+}
+
+/* nexus-pkg parefeu <réglage>, mot de passe sur l'entrée standard */
+static int run_fw_helper(const char *action, const char *pw, char *out, size_t outn)
+{
+    int in[2], o[2];
+    if (pipe(in) || pipe(o)) return -1;
+    void (*old)(int) = signal(SIGCHLD, SIG_DFL);
+    pid_t pid = fork();
+    if (pid == 0) {
+        dup2(in[0], 0); dup2(o[1], 1); dup2(o[1], 2);
+        close(in[0]); close(in[1]); close(o[0]); close(o[1]);
+        execl(PKG_HELPER, "nexus-pkg", "parefeu", action, (char *)NULL);
+        _exit(127);
+    }
+    close(in[0]); close(o[1]);
+    char line[160];
+    snprintf(line, sizeof line, "%s\n", pw);
+    if (write(in[1], line, strlen(line)) < 0) { /* l'outil refusera */ }
+    explicit_bzero(line, sizeof line);
+    close(in[1]);
+    size_t n = 0;
+    ssize_t r;
+    while (n + 1 < outn && (r = read(o[0], out + n, outn - 1 - n)) > 0) n += r;
+    out[n] = 0;
+    close(o[0]);
+    int st = 0;
+    if (pid > 0) waitpid(pid, &st, 0);
+    signal(SIGCHLD, old);
+    return pid > 0 && WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
+
+static void sec_submit(void)
+{
+    if (getuid() != 0 && !sec_pw[0]) { snprintf(sec_msg, sizeof sec_msg, "Saisis le mot de passe administrateur."); return; }
+    char out[256] = "";
+    int code = run_fw_helper(sec_action, sec_pw, out, sizeof out);
+    explicit_bzero(sec_pw, sizeof sec_pw);
+    if (code == 0) { sec_dlg = false; load_firewall(); return; }
+    snprintf(sec_msg, sizeof sec_msg, "%s", code == 3 ? "Mot de passe incorrect." :
+             code == 127 ? "Outil absent : mets à jour le système (npk upgrade)." : "Le réglage a échoué.");
+}
+
+static void sec_request(const char *action)
+{
+    snprintf(sec_action, sizeof sec_action, "%s", action);
+    sec_msg[0] = 0;
+    explicit_bzero(sec_pw, sizeof sec_pw);
+    if (getuid() == 0) { sec_submit(); return; }   /* root : pas de mot de passe à demander */
+    sec_dlg = true;
+}
+
+static void check_item(cairo_t *cr, double x, double y, double w, bool ok, const char *title, const char *sub)
+{
+    cairo_new_path(cr);
+    cairo_arc(cr, x + 12, y + 18, 11, 0, 2 * M_PI);
+    nx_set(cr, ok ? nx_rgb("#2fb36a") : nx_rgb("#e08a1e"));
+    cairo_fill(cr);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_set_line_width(cr, 2.2);
+    if (ok) { cairo_move_to(cr, x + 7, y + 18); cairo_line_to(cr, x + 11, y + 22); cairo_line_to(cr, x + 17, y + 14); }
+    else { cairo_move_to(cr, x + 12, y + 12); cairo_line_to(cr, x + 12, y + 19); cairo_move_to(cr, x + 12, y + 23); cairo_line_to(cr, x + 12, y + 24); }
+    cairo_stroke(cr);
+    nx_text(cr, title, 13.5, true, nx_rgb(NX_TEXT), x + 34, y + 2, w - 40, 20, NX_LEFT);
+    nx_text(cr, sub, 12, false, nx_rgb(NX_SUBTLE), x + 34, y + 21, w - 40, 18, NX_LEFT);
+}
+
+static void draw_security_section(cairo_t *cr, double x0, double cw)
+{
+    section_title(cr, x0, "Sécurité", "Pare-feu et protections de Nexus OS.");
+    /* État du pare-feu */
+    double y = 96;
+    nx_rounded_rect(cr, x0, y, cw, 64, 12);
+    nx_set(cr, fw_active ? nx_alpha(nx_rgb("#2fb36a"), 0.12) : nx_alpha(nx_rgb("#d64545"), 0.10));
+    cairo_fill(cr);
+    nx_icon(cr, "lock", x0 + 16, y + 16, 32, fw_active ? nx_rgb("#1f8a4f") : nx_rgb("#b83232"));
+    nx_text(cr, !fw_installed ? "Pare-feu non installé" : fw_active ? "Pare-feu actif" : "Pare-feu désactivé",
+            16, true, nx_rgb(NX_TEXT), x0 + 62, y + 10, cw - 80, 24, NX_LEFT);
+    nx_text(cr, !fw_installed ? "Installe-le : su -c \"npk update && npk install parefeu\"" :
+                fw_active ? "Les connexions entrantes que tu n'as pas demandées sont refusées." :
+                            "Ton ordinateur accepte toutes les connexions entrantes.",
+            12.5, false, nx_rgb(NX_SUBTLE), x0 + 62, y + 34, cw - 80, 20, NX_LEFT);
+    if (fw_installed) {
+        toggle_row(cr, x0, y + 78, cw, K_FW, 0, "Pare-feu",
+                   "Bloque les connexions entrantes non demandées (recommandé)", fw_active);
+        toggle_row(cr, x0, y + 142, cw, K_FW, 1, "Connexion à distance (SSH)",
+                   "Autorise le port 22, seulement si tu utilises SSH", fw_ssh);
+        toggle_row(cr, x0, y + 206, cw, K_FW, 2, "Répondre au ping",
+                   "Permet de vérifier depuis le réseau que l'ordinateur est allumé", fw_ping);
+    }
+    /* Autres protections */
+    y += fw_installed ? 286 : 86;
+    nx_text(cr, "Protections", 14, true, nx_rgb(NX_TEXT), x0, y, 0, 24, NX_LEFT);
+    y += 30;
+    double w2 = (cw - 16) / 2;
+    char lock[80];
+    if (nx_conf.lock_minutes > 0) snprintf(lock, sizeof lock, "Après %d min d'inactivité", nx_conf.lock_minutes);
+    else snprintf(lock, sizeof lock, "Désactivé : voir Verrouillage");
+    check_item(cr, x0, y, w2, true, "Dossiers personnels privés", "Les autres comptes ne lisent pas tes fichiers");
+    check_item(cr, x0 + w2 + 16, y, w2, true, "Logiciels signés", "Chaque paquet est vérifié avant installation");
+    check_item(cr, x0, y + 50, w2, true, "Noyau protégé", "Yama, adresses aléatoires, sysctl durcis");
+    check_item(cr, x0 + w2 + 16, y + 50, w2, nx_conf.lock_minutes > 0, "Verrouillage automatique", lock);
+}
+
+static void draw_sec_dialog(cairo_t *cr, int width, int height)
+{
+    cairo_set_source_rgba(cr, 0.05, 0.07, 0.1, 0.35);
+    cairo_paint(cr);
+    add_rect(0, 0, width, height, K_SEC_BG, 0);   /* fond : capte les clics, ne fait rien */
+    double dw = 440, dh = 220, dx = (width - dw) / 2, dy = (height - dh) / 2;
+    nx_rounded_rect(cr, dx, dy, dw, dh, 14);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_fill(cr);
+    nx_text(cr, "Mot de passe administrateur", 17, true, nx_rgb(NX_TEXT), dx + 24, dy + 18, dw - 48, 28, NX_LEFT);
+    nx_text(cr, "Modifier le pare-feu demande le mot de passe root.", 13, false, nx_rgb(NX_SUBTLE),
+            dx + 24, dy + 50, dw - 48, 20, NX_LEFT);
+    nx_rounded_rect(cr, dx + 24, dy + 82, dw - 48, 42, 9);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_fill_preserve(cr);
+    nx_set(cr, nx_accent_color());
+    cairo_set_line_width(cr, 2);
+    cairo_stroke(cr);
+    int n = 0;
+    for (const char *c = sec_pw; *c; c++) if (((unsigned char)*c & 0xC0) != 0x80) n++;
+    for (int i = 0; i < n && i < 24; i++) {
+        cairo_new_path(cr);
+        cairo_arc(cr, dx + 42 + i * 14, dy + 103, 4, 0, 2 * M_PI);
+        nx_set(cr, nx_rgb(NX_TEXT));
+        cairo_fill(cr);
+    }
+    if (sec_msg[0]) nx_text(cr, sec_msg, 12.5, true, nx_rgb("#c0392b"), dx + 24, dy + 130, dw - 48, 20, NX_LEFT);
+    double by = dy + dh - 56;
+    nx_rounded_rect(cr, dx + dw - 24 - 120, by, 120, 36, 8);
+    nx_set(cr, is_hover(K_SEC_OK, 0) ? nx_mix(nx_accent_color(), nx_rgb("#ffffff"), 0.15) : nx_accent_color());
+    cairo_fill(cr);
+    nx_text(cr, "Valider", 13.5, true, nx_rgb("#ffffff"), dx + dw - 24 - 120, by, 120, 36, NX_CENTER);
+    add_rect(dx + dw - 24 - 120, by, 120, 36, K_SEC_OK, 0);
+    nx_rounded_rect(cr, dx + dw - 24 - 240, by, 110, 36, 8);
+    nx_set(cr, is_hover(K_SEC_CANCEL, 0) ? nx_rgb("#e3e7ef") : nx_rgb("#eef1f6"));
+    cairo_fill(cr);
+    nx_text(cr, "Annuler", 13.5, false, nx_rgb(NX_TEXT), dx + dw - 24 - 240, by, 110, 36, NX_CENTER);
+    add_rect(dx + dw - 24 - 240, by, 110, 36, K_SEC_CANCEL, 0);
+}
+
 /* ---------- Clavier ---------- */
 
 /* Même liste que /usr/sbin/nexus-keymap (id, disposition XKB, variante, nom) */
@@ -1136,7 +1307,7 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     nx_icon(cr, "settings", 22, 22, 34, nx_rgb(NX_TEXT));
     nx_text(cr, "Paramètres", 16, true, nx_rgb(NX_TEXT), 64, 22, SIDE_W - 70, 34, NX_LEFT);
     for (int i = 0; i < SEC_COUNT; i++) {
-        double y = 78 + i * 45;
+        double y = 76 + i * 43;
         bool sel = i == section;
         if (sel || is_hover(K_NAV, i)) {
             nx_rounded_rect(cr, 10, y, SIDE_W - 20, 42, 8);
@@ -1165,9 +1336,11 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     case SEC_KEYBOARD: draw_keyboard_section(cr, x0, cw); break;
     case SEC_THEME: draw_theme_section(cr, x0, cw); break;
     case SEC_LOCK: draw_lock_section(cr, x0, cw); break;
+    case SEC_SECURITY: draw_security_section(cr, x0, cw); break;
     case SEC_ABOUT: draw_about(cr, x0, cw); break;
     }
     if (dlg) draw_account_dialog(cr, width, height);
+    if (sec_dlg) draw_sec_dialog(cr, width, height);
 }
 
 /* ---------- Souris ---------- */
@@ -1187,6 +1360,7 @@ static void click(struct rect *r)
     case K_NAV:
         section = r->index;
         if (section == SEC_ACCOUNTS) load_accounts();   /* comptes créés ailleurs entre-temps */
+        if (section == SEC_SECURITY) load_firewall();
         break;
     case K_WALL:
         snprintf(nx_conf.wallpaper, sizeof nx_conf.wallpaper, "%s", walls[r->index].spec);
@@ -1213,6 +1387,15 @@ static void click(struct rect *r)
     case K_THEME: nx_conf.theme = r->index; apply(); apply_window_theme(); break;
     case K_LOCKDELAY: nx_conf.lock_minutes = lock_delays[r->index]; apply(); break;
     case K_LOCKNOW: nx_spawn("nexus-lock"); break;
+    case K_FW: {
+        static const char *on[] = { "on", "ssh-on", "ping-on" }, *off[] = { "off", "ssh-off", "ping-off" };
+        bool cur = r->index == 0 ? fw_active : r->index == 1 ? fw_ssh : fw_ping;
+        sec_request(cur ? off[r->index] : on[r->index]);
+        break;
+    }
+    case K_SEC_OK: sec_submit(); break;
+    case K_SEC_CANCEL: sec_dlg = false; explicit_bzero(sec_pw, sizeof sec_pw); break;
+    case K_SEC_BG: break;
     case K_ISIZE: nx_conf.icon_size = r->index; apply(); break;
     case K_ISTYLE: nx_conf.icon_style = r->index; apply(); break;
     case K_ISHAPE: nx_conf.icon_shape = r->index; nx_conf.icon_style = 0; apply(); break;
@@ -1263,6 +1446,19 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
 
 static void key(struct nx_window *w, xkb_keysym_t sym, const char *utf8)
 {
+    if (sec_dlg) {
+        if (sym == XKB_KEY_Escape) { sec_dlg = false; explicit_bzero(sec_pw, sizeof sec_pw); }
+        else if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter) sec_submit();
+        else if (sym == XKB_KEY_BackSpace) {
+            size_t l = strlen(sec_pw);
+            while (l > 0 && ((unsigned char)sec_pw[l - 1] & 0xC0) == 0x80) l--;
+            if (l > 0) l--;
+            sec_pw[l] = 0;
+        } else if (utf8 && (unsigned char)utf8[0] >= 0x20 && utf8[0] != 0x7f && strlen(sec_pw) + strlen(utf8) < sizeof sec_pw - 1)
+            strcat(sec_pw, utf8);
+        nx_redraw(w);
+        return;
+    }
     if (dialog_key(sym, utf8)) { nx_redraw(w); return; }
     if (section == SEC_KEYBOARD && sym == XKB_KEY_BackSpace && kb_test[0]) {
         size_t l = strlen(kb_test);
@@ -1297,6 +1493,7 @@ int settings_main(int argc, char **argv)
         else if (!strcmp(argv[i], "--keyboard")) section = SEC_KEYBOARD;
         else if (!strcmp(argv[i], "--theme")) section = SEC_THEME;
         else if (!strcmp(argv[i], "--lock")) section = SEC_LOCK;
+        else if (!strcmp(argv[i], "--security")) section = SEC_SECURITY;
         else if (!strcmp(argv[i], "--about")) section = SEC_ABOUT;
     }
     if (!nx_init()) return 1;
@@ -1304,6 +1501,7 @@ int settings_main(int argc, char **argv)
     load_info();
     load_accounts();
     load_keyboard();
+    load_firewall();
     struct nx_handlers h = { .draw = draw, .pointer = pointer, .key = key };
     win = nx_toplevel_window(h, "Paramètres", "nexus-settings", WIN_W, WIN_H);
     if (!win) return 1;

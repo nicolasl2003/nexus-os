@@ -1,6 +1,6 @@
 NAME=linux-wifi
 VERSION=6.12.10
-REL=2
+REL=3
 DEPENDS=""
 DESC="Pilotes Wi-Fi (Intel, MediaTek, Realtek, Atheros) et leurs firmwares"
 

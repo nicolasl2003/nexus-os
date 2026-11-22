@@ -1351,20 +1351,32 @@ static void k_key(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t t, u
     deliver_key(key);
 }
 
-/* ms avant la prochaine répétition (-1 : aucune) ; déclenche celles dues */
+/* ms avant la prochaine répétition (-1 : aucune) */
 static int repeat_timeout(void)
 {
     if (!rep_key || !nx.keyboard_focus) return -1;
     double now = mono_now();
-    int guard = 0;
-    while (rep_key && now >= rep_next && guard++ < 4) {
-        deliver_key(rep_key);
-        rep_next += 1.0 / rep_rate;
-    }
-    if (!rep_key) return -1;
-    if (now >= rep_next) rep_next = now + 1.0 / rep_rate;   /* trop de retard : on ne rattrape pas */
     int ms = (int)((rep_next - now) * 1000) + 1;
     return ms < 1 ? 1 : ms;
+}
+
+/* Déclenche une répétition due. Appelé APRÈS la lecture des événements :
+ * si le programme était occupé (ex. vérification d'un mot de passe), le
+ * relâchement de la touche, arrivé entre-temps, a déjà annulé la répétition
+ * (sinon Entrée serait « répétée » à tort). */
+static void repeat_fire(void)
+{
+    if (!rep_key || !nx.keyboard_focus) return;
+    double now = mono_now();
+    if (now < rep_next) return;
+    if (now - rep_next > 0.25) {
+        /* très en retard : le programme était occupé ; on relit d'abord les
+         * événements (le relâchement de la touche est sans doute arrivé) */
+        rep_next = now + 1.0 / rep_rate;
+        return;
+    }
+    deliver_key(rep_key);
+    rep_next = now + 1.0 / rep_rate;
 }
 static void k_modifiers(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t dep,
                         uint32_t lat, uint32_t lock, uint32_t group)
@@ -1619,6 +1631,7 @@ void nx_run(void)
             wl_display_cancel_read(nx.display);
         }
         if (wl_display_dispatch_pending(nx.display) < 0) break;   /* compositeur parti */
+        repeat_fire();
 
         if (r == 0 && nx.tick && app_deadline >= 0 && mono_now() >= app_deadline - 0.002) nx.tick();
         if (reload_flag) {

@@ -747,3 +747,33 @@ privé), en remplaçant l'ancienne version (un seul commit). `DRY_RUN=1 make
 publish` prépare le site dans `.pages/` sans rien envoyer. GitHub Pages doit
 être activé une fois : dépôt nexus-paquets → Settings → Pages → « Deploy from
 a branch » → `main`, `/ (root)`.
+
+## Nexus 0.14 : sécurité (lot 1)
+
+- **Dossiers personnels privés** : `/home/<compte>` en 700 (corrigé à chaque
+  démarrage pour les comptes existants), masque `umask 027` (consoles et
+  session graphique) : un compte ne peut plus lire les fichiers d'un autre.
+- **Pare-feu** (paquet `parefeu`, installé avec le bureau) : nftables
+  (`nft` statique), service `parefeu` lancé tôt au démarrage. Tout ce qui
+  arrive sans avoir été demandé est refusé ; les réponses à ce que
+  l'ordinateur demande passent (suivi des connexions). Le DHCP, l'ICMPv6 et
+  (au choix) le ping et SSH sont autorisés. Les refus sont notés par le
+  noyau (`su -c "dmesg | grep pare-feu"`). Réglages : **Paramètres → Sécurité**
+  (mot de passe administrateur) ou `su -c "nexus-parefeu set ssh-on"` ;
+  `nexus-parefeu status`, `su -c "nexus-parefeu show"` (règles).
+- **Noyau** : Yama (un programme ne peut pas espionner un autre),
+  *hardened usercopy*, `STRICT_DEVMEM` ; `/etc/sysctl.conf` : adresses du
+  noyau et journal cachés, liens piégés bloqués, redirections réseau
+  refusées, *SYN cookies*, etc.
+- **BusyBox sans setuid** : seul `busybox-suid` (3 outils seulement : `su`,
+  `passwd`, `ping`) a les droits root ; le BusyBox principal (ls, wget,
+  sh…) n'en a plus aucun.
+- **Écran de connexion** : le compte Administrateur (root) n'y apparaît plus
+  (sauf en mode live) ; il reste utilisable avec `su` et les demandes de
+  mot de passe.
+
+Testé dans une VM vierge : dossier `drwx------`, Yama et sysctl actifs,
+`su` toujours possible (mot de passe root) mais plus de `dmesg` pour un compte
+ordinaire, SSH (dropbear) injoignable puis joignable après
+« Connexion à distance (SSH) » dans Paramètres → Sécurité (mauvais mot de
+passe refusé), Internet et `npk` fonctionnels pare-feu actif.

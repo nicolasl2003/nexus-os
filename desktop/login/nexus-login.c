@@ -162,6 +162,7 @@ static void run_session(const char *name)
         setenv("SHELL", pw->pw_shell, 1);
         setenv("NEXUS_SESSION", "1", 1);
         if (chdir(pw->pw_dir) != 0 && chdir("/") != 0) _exit(1);
+        umask(027);   /* fichiers créés : pas lisibles par les autres comptes */
         execl("/usr/local/bin/nexus-desktop", "nexus-desktop", (char *)NULL);
         _exit(127);
     }

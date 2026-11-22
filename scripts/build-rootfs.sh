@@ -28,7 +28,7 @@ install -m 644 "$NPK_PUB" etc/npk/keys/nexus-npk.pub
 # dans l'image, avec l'INDEX signé. Au premier démarrage avec disque, rcS les
 # installe sans réseau : l'assistant de configuration graphique peut s'ouvrir
 # tout de suite. (Toujours vérifiés par npk : signature + SHA-256.)
-PREINSTALL="nexus-desktop netsurf"
+PREINSTALL="nexus-desktop netsurf parefeu"
 rm -rf usr/share/nexus/preinstall
 if [ -f "$REPO_DIR/INDEX" ] && [ -f "$REPO_DIR/INDEX.minisig" ]; then
     pre=usr/share/nexus/preinstall
@@ -52,11 +52,12 @@ else
     log "Dépôt absent : pas de bureau embarqué (make packages pour l'ajouter)"
 fi
 
-# Droits : shadow lisible par root seul ; busybox setuid pour que
-# passwd et su fonctionnent pour les utilisateurs (BusyBox abandonne
-# les privilèges pour toutes les autres commandes).
+# Droits : shadow lisible par root seul ; seul le petit busybox-suid
+# (su, passwd, ping) a les droits root, le BusyBox principal aucun.
 chmod 600 etc/shadow
-chmod 4755 bin/busybox
+chmod 755 bin/busybox
+[ -x bin/busybox-suid ] || { echo "busybox-suid absent : lance 'make busybox'" >&2; exit 1; }
+chmod 4755 bin/busybox-suid
 
 # Le noyau exécute /init depuis l'initramfs : on pointe sur busybox init
 ln -sf sbin/init init

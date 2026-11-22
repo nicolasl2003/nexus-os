@@ -51,6 +51,12 @@ fi
 
 hostname -F /etc/hostname
 
+# Sécurité du noyau (voir /etc/sysctl.conf)
+sysctl -e -p /etc/sysctl.conf >/dev/null 2>&1
+
+# Dossiers personnels privés : un compte ne peut pas lire les fichiers des autres
+for d in /home/*; do [ -d "$d" ] && chmod 700 "$d"; done
+
 # Disposition du clavier des consoles (AZERTY par défaut, voir nexus-keymap)
 /usr/sbin/nexus-keymap boot
 

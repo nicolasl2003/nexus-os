@@ -21,6 +21,7 @@
 #include <ctype.h>
 #include <pwd.h>
 #include <shadow.h>
+#include <sys/stat.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -148,6 +149,7 @@ int main(int argc, char **argv)
         snprintf(own, sizeof own, "%s:%s", name, name);
         char *a3[] = { "chown", "-R", own, home, NULL };
         run(a3, NULL);
+        chmod(home, 0700);                    /* dossier personnel privé */
         static char *groups[] = { "video", "audio", "netdev" };
         for (int i = 0; i < 3; i++) {
             char *a4[] = { "addgroup", (char *)name, groups[i], NULL };

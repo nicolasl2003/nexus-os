@@ -306,6 +306,7 @@ static bool apply_all(void)
         snprintf(own, sizeof own, "%s:%s", user, user);
         char *a3[] = { "/bin/busybox", "chown", "-R", own, home, NULL };
         run(a3, NULL);
+        chmod(home, 0700);                    /* dossier personnel privé */
         save_look_for(pw->pw_dir, pw->pw_uid, pw->pw_gid);
     }
     save_look_for("/root", 0, 0);

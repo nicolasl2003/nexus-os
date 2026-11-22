@@ -92,6 +92,7 @@ while :; do
         adduser -D -s /bin/sh -h "/home/$user" "$user" || { err "Échec de la création."; continue; }
         cp -a /etc/skel/. "/home/$user/" 2>/dev/null
         chown -R "$user:$user" "/home/$user"
+        chmod 700 "/home/$user"            # dossier personnel privé
     fi
     # Groupe 'video' : droit d'ouvrir le bureau graphique
     grep -q '^video:' /etc/group || addgroup -S video

@@ -1,6 +1,6 @@
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
 export HOME="${HOME:-/root}"
-umask 022
+umask 027   # fichiers créés : lisibles par soi (et son groupe), pas par les autres comptes
 
 # Invite : rouge pour root, cyan pour les utilisateurs
 if [ "$(id -u)" = 0 ]; then
