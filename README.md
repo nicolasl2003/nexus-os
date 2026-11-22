@@ -718,3 +718,32 @@ passe, et automatique après 5 min), thème clair.
 Mise à jour d'une installation existante : la hauteur de barre déjà choisie
 est conservée ; pour le grand dock, tirer le bord supérieur de la barre vers
 le haut (ou Paramètres → Barre et menu).
+
+## Dépôt de paquets en ligne
+
+`npk` (et donc le Magasin, les mises à jour automatiques, l'assistant)
+essaie les dépôts dans l'ordre de `REPO_URLS` (`/etc/npk/repo.conf`) :
+
+1. `http://10.0.2.2:8080` : le Mac, pendant `make run-native` (développement) ;
+2. `https://nicolasl2003.github.io/nexus-paquets` : le dépôt en ligne.
+
+Le premier qui répond avec un index **bien signé** et pas plus ancien que
+l'actuel est retenu (`/usr/local/var/lib/npk/REPO`) ; si un paquet manque, les
+autres dépôts sont essayés. Le téléchargement HTTPS passe par le `wget` de
+BusyBox (pas besoin de curl) : il ne vérifie pas le certificat du site, mais
+la signature de l'INDEX et le SHA-256 de chaque paquet suffisent à refuser
+tout fichier modifié. Autre dépôt : `REPO_URLS="…"` dans
+`/usr/local/etc/npk/repo.conf`.
+
+**Publier** (sur le Mac, après `make packages` et `make dist`) :
+
+```bash
+make publish
+```
+
+Copie `dist/repo` et une page d'accueil (`index.html`, liste des paquets) dans
+le dépôt GitHub **public** `nexus-paquets` (le code de Nexus OS peut rester
+privé), en remplaçant l'ancienne version (un seul commit). `DRY_RUN=1 make
+publish` prépare le site dans `.pages/` sans rien envoyer. GitHub Pages doit
+être activé une fois : dépôt nexus-paquets → Settings → Pages → « Deploy from
+a branch » → `main`, `/ (root)`.

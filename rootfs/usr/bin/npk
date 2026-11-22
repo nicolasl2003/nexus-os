@@ -18,10 +18,20 @@ DB="$NPK_ROOT/var/lib/npk"
 CACHE="$NPK_ROOT/var/cache/npk"
 INDEX="$DB/INDEX"
 
-REPO_URL="http://10.0.2.2:8080"
+# Dépôts, essayés dans l'ordre (le premier qui répond avec un index bien
+# signé est retenu, dans $DB/REPO) : le Mac en développement (make
+# run-native), puis le dépôt en ligne sur GitHub Pages.
+REPO_URLS="http://10.0.2.2:8080 https://nicolasl2003.github.io/nexus-paquets"
+REPO_URL=""
 [ -f /etc/npk/repo.conf ] && . /etc/npk/repo.conf
 [ -f "$NPK_ROOT/etc/npk/repo.conf" ] && . "$NPK_ROOT/etc/npk/repo.conf"
+# Ancienne forme (REPO_URL=... dans repo.conf) : un seul dépôt
+[ -n "$REPO_URL" ] && REPO_URLS="$REPO_URL"
 # Dépôt imposé pour une commande (ex. paquets embarqués, file:///chemin)
+[ -n "${NPK_REPO_URL:-}" ] && REPO_URLS="$NPK_REPO_URL"
+# Dépôt retenu par la dernière mise à jour (pour télécharger les paquets)
+REPO_URL=$(cat "$DB/REPO" 2>/dev/null)
+[ -n "$REPO_URL" ] || REPO_URL="${REPO_URLS%% *}"
 [ -n "${NPK_REPO_URL:-}" ] && REPO_URL="$NPK_REPO_URL"
 
 die() { printf '\033[1;31mnpk :\033[0m %s\n' "$*" >&2; exit 1; }
@@ -35,13 +45,14 @@ download() {
     case "$1" in
         file://*) cp "${1#file://}" "$2" 2>/dev/null; return ;;   # dépôt local
     esac
+    # (HTTPS : le wget de BusyBox ne vérifie pas le certificat du site, mais
+    #  chaque index est signé et chaque paquet a son empreinte SHA-256 :
+    #  un fichier modifié en route est refusé quoi qu'il arrive)
     if [ -x "$NPK_ROOT/bin/curl" ]; then
-        "$NPK_ROOT/bin/curl" -fsSL --retry 2 -o "$2" "$1"
+        "$NPK_ROOT/bin/curl" -fsSL --retry 2 --connect-timeout 4 -o "$2" "$1"
     else
-        case "$1" in
-            https://*) die "dépôt HTTPS : installe d'abord curl (npk install curl, depuis un dépôt HTTP)" ;;
-        esac
-        wget -q -O "$2" "$1" 2>/dev/null
+        rm -f "$2"
+        wget -q -T 8 -O "$2" "$1" 2>/dev/null
     fi
 }
 
@@ -98,7 +109,15 @@ install_one() {
     fi
 
     say "Téléchargement de $_file"
-    download "$REPO_URL/$_file" "$CACHE/$_file" || die "échec du téléchargement de $_file"
+    # dépôt retenu, sinon les autres (le SHA-256 est vérifié ensuite de toute façon)
+    if ! download "$REPO_URL/$_file" "$CACHE/$_file"; then
+        _ok=no
+        for _u in $REPO_URLS; do
+            [ "$_u" = "$REPO_URL" ] && continue
+            download "$_u/$_file" "$CACHE/$_file" && { _ok=yes; break; }
+        done
+        [ "$_ok" = yes ] || die "échec du téléchargement de $_file (connexion à Internet ?)"
+    fi
     echo "$_sum  $CACHE/$_file" | sha256sum -c -s ||
         { rm -f "$CACHE/$_file"; die "somme de contrôle invalide pour $_file"; }
 
@@ -165,28 +184,30 @@ verify_index() {
     return 1
 }
 
-cmd_update() {
-    say "Mise à jour de l'index depuis $REPO_URL"
+# Essaie un dépôt : 0 = index accepté (installé), 1 = injoignable, 2 = refusé
+try_repo() {
+    _url="$1"
     rm -f "$INDEX.new" "$INDEX.minisig.new"
-    download "$REPO_URL/INDEX" "$INDEX.new" ||
-        { rm -f "$INDEX.new"; die "dépôt injoignable ($REPO_URL)"; }
+    download "$_url/INDEX" "$INDEX.new" && [ -s "$INDEX.new" ] || { rm -f "$INDEX.new"; return 1; }
 
-    if ! download "$REPO_URL/INDEX.minisig" "$INDEX.minisig.new"; then
+    if ! download "$_url/INDEX.minisig" "$INDEX.minisig.new"; then
         rm -f "$INDEX.minisig.new"
         if [ "${ALLOW_UNSIGNED:-no}" = yes ]; then
             printf '\033[1;33m:: ATTENTION : dépôt non signé, paquets NON vérifiés (ALLOW_UNSIGNED=yes)\033[0m\n'
             mv "$INDEX.new" "$INDEX"
-            say "$(wc -l < "$INDEX") paquet(s) disponible(s)"
+            echo "$_url" > "$DB/REPO"
             return 0
         fi
         rm -f "$INDEX.new"
-        die "le dépôt n'est pas signé (INDEX.minisig absent) : mise à jour refusée"
+        say "$_url : pas de signature (INDEX.minisig), dépôt ignoré"
+        return 2
     fi
 
     # 1. Authenticité : l'index doit être signé par une clé de confiance
     if ! _ts=$(verify_index); then
         rm -f "$INDEX.new" "$INDEX.minisig.new"
-        die "SIGNATURE INVALIDE : l'index a été modifié ou ne vient pas d'une source de confiance. Mise à jour refusée, rien n'a changé."
+        printf '\033[1;31m:: %s : SIGNATURE INVALIDE, dépôt ignoré\033[0m\n' "$_url"
+        return 2
     fi
 
     # 2. Fraîcheur : refuser un index plus ancien que celui déjà accepté
@@ -195,14 +216,27 @@ cmd_update() {
     _old=$(cat "$DB/INDEX.timestamp" 2>/dev/null || echo 0)
     if [ "$_ts" -lt "$_old" ]; then
         rm -f "$INDEX.new" "$INDEX.minisig.new"
-        die "index signé le $(date -d "@$_ts" '+%F %T') plus ancien que l'actuel ($(date -d "@$_old" '+%F %T')) : possible attaque par retour en arrière, refusé."
+        say "$_url : index plus ancien que celui déjà installé ($(date -d "@$_ts" '+%F %T')), dépôt ignoré"
+        return 2
     fi
 
     mv "$INDEX.new" "$INDEX"
     mv "$INDEX.minisig.new" "$INDEX.minisig"
     echo "$_ts" > "$DB/INDEX.timestamp"
+    # (un dépôt local temporaire, file://, n'est pas retenu)
+    case "$_url" in file://*) rm -f "$DB/REPO" ;; *) echo "$_url" > "$DB/REPO" ;; esac
+    REPO_URL="$_url"
+    say "Dépôt : $_url"
     say "Signature vérifiée (index signé le $(date -d "@$_ts" '+%F %T'))"
     say "$(wc -l < "$INDEX") paquet(s) disponible(s)"
+    return 0
+}
+
+cmd_update() {
+    for _u in $REPO_URLS; do
+        try_repo "$_u" && return 0
+    done
+    die "aucun dépôt joignable ($REPO_URLS) : vérifie la connexion à Internet"
 }
 
 cmd_search() {
@@ -316,7 +350,8 @@ npk — gestionnaire de paquets de Nexus OS
   npk alpine ...          logiciels d'Alpine Linux (~30 000) : update, search,
                           install, remove, list, upgrade (paquet « alpine »)
 
-Dépôt : $REPO_URL   Racine : $NPK_ROOT
+Dépôts : $REPO_URLS
+Racine : $NPK_ROOT
 EOF
 }
 

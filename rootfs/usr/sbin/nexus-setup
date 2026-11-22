@@ -111,7 +111,7 @@ install_desktop() {
         i=$((i + 1))
         if [ $i -ge 15 ]; then
             echo
-            err "Dépôt injoignable (sur le Mac : lance la VM avec « make run-native »)."
+            err "Dépôt injoignable : vérifie la connexion à Internet (ou lance la VM avec « make run-native »)."
             echo "Tu pourras l'installer plus tard : su -c \"npk update && npk install nexus-desktop\""
             return 1
         fi

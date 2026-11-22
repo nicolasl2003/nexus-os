@@ -10,7 +10,7 @@ GUI_IMAGE := nexus-os-gui-builder
 DOCKER_GUI_BUILD := docker run --rm -e FORCE -v "$(CURDIR)":/work -v $(VOLUME):/work/build $(GUI_IMAGE)
 DOCKER_BATCH := docker run --rm -e DATA_DISK_SIZE -e FORCE -v "$(CURDIR)":/work -v $(VOLUME):/work/build $(IMAGE)
 
-.PHONY: all image kernel busybox tools keys rootfs iso packages dist disk disk-reset run run-gui run-native run-native-web run-iso run-iso-gui run-uefi novnc gui-image gui-stack desktop-apps shell clean
+.PHONY: publish all image kernel busybox tools keys rootfs iso packages dist disk disk-reset run run-gui run-native run-native-web run-iso run-iso-gui run-uefi novnc gui-image gui-stack desktop-apps shell clean
 
 all: kernel busybox tools keys packages rootfs iso dist
 
@@ -98,3 +98,7 @@ shell: image
 clean:
 	rm -rf dist
 	-docker volume rm $(VOLUME)
+
+# Publie le dépôt de paquets en ligne (dépôt public nexus-paquets, GitHub Pages)
+publish:
+	./scripts/publish-repo.sh
