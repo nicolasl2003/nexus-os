@@ -1,18 +1,23 @@
-/* nexus-panel — la barre des tâches de Nexus OS (en bas, style "verre" sombre).
+/* nexus-panel — la barre des tâches de Nexus OS : un dock flottant centré.
  *
- *  [N] [loupe] [Fichiers][Terminal][Paramètres]...  | fenêtres |      (réseau)  14:37
- *                                                                           27/10/2025
- * - N : menu Démarrer ; loupe : menu Démarrer en mode recherche
+ *            ╭──────────────────────────────────╮
+ *  ──────────│ N  🔍 │ Fichiers Navigateur ... │ fenêtres │──────  ^ 📶 🔊 🔋 │ 22:03
+ *            ╰──────────────────────────────────╯                         22/11/2026
+ * - N : menu Démarrer (il s'ouvre au-dessus, une flèche pointe vers N) ;
+ *   loupe : menu Démarrer en mode recherche
  * - applications épinglées : clic = lancer, ou afficher/réduire si déjà ouverte ;
- *   un trait sous l'icône signale une fenêtre ouverte (large et coloré = active)
- * - les autres fenêtres ouvertes suivent, en icônes ; clic du milieu = fermer
- * - à droite : état du réseau, heure et date (mises à jour chaque minute)
+ *   un halo lumineux sous l'icône = fenêtre active, un point = fenêtre ouverte
+ * - les autres fenêtres ouvertes suivent, après un séparateur ; clic du milieu = fermer
+ * - à droite : raccourcis (^), réseau, son, batterie, heure et date
+ * - tirer le bord supérieur de la barre change sa hauteur
  */
 #define _GNU_SOURCE
 #include "nexus-ui.h"
 #include "audio.h"
 #include "network.h"
 
+#include <dirent.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,19 +25,19 @@
 #include <unistd.h>
 #include <linux/input-event-codes.h>
 
-/* Dimensions selon la taille choisie dans Paramètres (petite/moyenne/grande) */
-static int cur_h = 52;
+/* Hauteur de la barre (réglable) ; le dock dépasse un peu au-dessus */
+static int cur_h = 66;
+#define LIFT    0                        /* (débordement au-dessus : non, il capterait les clics) */
 #define PANEL_H cur_h
-#define BTN_W   (cur_h - 6)
-#define BTN_H   (cur_h - 12)
-#define ICON    (cur_h * 0.54 * nx_icon_factor())
-#define SMALL   (cur_h * 22.0 / 52)
-#define GRIP    6          /* bord supérieur : tirer pour changer la hauteur */
+#define DOCK_H  (cur_h - 8.0)
+#define CELL    (DOCK_H * 0.98)          /* largeur d'une case du dock */
+#define ICON    (DOCK_H * 0.68 * nx_icon_factor())
+#define GRIP    6
 /* Texte proportionnel à la hauteur de la barre */
-static double tk(void) { double k = cur_h / 52.0; return k < 0.85 ? 0.85 : k > 1.7 ? 1.7 : k; }
+static double tk(void) { double k = cur_h / 60.0; return k < 0.8 ? 0.8 : k > 1.6 ? 1.6 : k; }
 
 static bool resizing, grip_hover;
-static double grip_y0;   /* position du curseur au début (repère indépendant de la taille) */
+static double grip_y0;
 static int grip_h0;
 
 struct task {
@@ -49,17 +54,14 @@ struct pin { const char *label, *icon, *app_id, *cmd, *needs; };
 static const struct pin all_pins[] = {
     { "Fichiers", "files", "nexus-files", "nexus-files", NULL },
     { "Navigateur", "browser", "nexus-browser", "nexus-browser", "/usr/local/bin/netsurf-fb" },
-    { "Terminal", "terminal", "foot", "foot", NULL },
     { "Paramètres", "settings", "nexus-settings", "nexus-settings", NULL },
-    { "Moniteur système", "monitor", "nexus-monitor",
-      "foot --app-id=nexus-monitor --title='Moniteur système' htop", "/usr/local/bin/htop" },
     { "Magasin d'applications", "store", "nexus-store", "nexus-store", NULL },
 };
 static const struct pin *pins[8];
 static int npins;
 
 /* Boutons de la barre, recalculés à chaque dessin */
-enum bkind { B_START, B_SEARCH, B_PIN, B_TASK, B_NET, B_VOL, B_CLOCK };
+enum bkind { B_START, B_SEARCH, B_PIN, B_TASK, B_NET, B_VOL, B_CLOCK, B_MORE, B_BAT };
 struct btn { enum bkind kind; int index; double x, w; };
 static struct btn btns[64];
 static int nbtns;
@@ -169,136 +171,251 @@ static void add_btn(enum bkind k, int index, double x, double w)
     if (nbtns < 64) btns[nbtns++] = (struct btn){ k, index, x, w };
 }
 
-static void button_bg(cairo_t *cr, double x, double w, int index)
+/* Fond d'un bouton du dock survolé / pressé */
+static void button_bg(cairo_t *cr, double x, double w, double y, double h, int index)
 {
     if (hover != index && pressed != index) return;
-    nx_rounded_rect(cr, x, (PANEL_H - BTN_H) / 2.0, w, BTN_H, 8);
-    nx_set(cr, nx_fg(pressed == index ? 0.16 : 0.10));
+    nx_rounded_rect(cr, x + 3, y, w - 6, h, h * 0.28);
+    nx_set(cr, nx_fg(pressed == index ? 0.18 : 0.11));
     cairo_fill(cr);
 }
 
-static void indicator(cairo_t *cr, double cx, int count, bool active)
+/* Sous l'icône : halo coloré (fenêtre active) ou petit point (ouverte) */
+static void indicator(cairo_t *cr, double cx, double y, int count, bool active)
 {
     if (!count) return;
-    double w = active ? 16 : 6;
-    nx_rounded_rect(cr, cx - w / 2, PANEL_H - 7, w, 3, 1.5);
-    if (active) nx_set(cr, nx_mix(nx_accent_color(), nx_rgb("#ffffff"), 0.3));
-    else nx_set(cr, nx_fg(0.55));
+    nx_color a = nx_accent_color();
+    if (active) {
+        for (int i = 6; i >= 1; i--) {                     /* lueur */
+            nx_rounded_rect(cr, cx - 10 - i * 1.6, y - i * 0.9, 20 + i * 3.2, 4 + i * 1.8, 2 + i);
+            nx_set(cr, nx_alpha(a, 0.07));
+            cairo_fill(cr);
+        }
+        nx_rounded_rect(cr, cx - 10, y, 20, 4, 2);
+        nx_set(cr, nx_mix(a, nx_rgb("#ffffff"), 0.35));
+        cairo_fill(cr);
+    } else {
+        cairo_new_path(cr);
+        cairo_arc(cr, cx, y + 2, 2.4, 0, 2 * M_PI);
+        nx_set(cr, nx_fg(0.6));
+        cairo_fill(cr);
+    }
+}
+
+/* Batterie (portable) : pourcentage, -1 si pas de batterie */
+static int battery(bool *charging)
+{
+    DIR *d = opendir("/sys/class/power_supply");
+    if (!d) return -1;
+    struct dirent *e;
+    int pct = -1;
+    while ((e = readdir(d)) && pct < 0) {
+        if (strncmp(e->d_name, "BAT", 3)) continue;
+        char p[300], buf[32] = "";
+        snprintf(p, sizeof p, "/sys/class/power_supply/%s/capacity", e->d_name);
+        FILE *f = fopen(p, "r");
+        if (f) { if (fgets(buf, sizeof buf, f)) pct = atoi(buf); fclose(f); }
+        snprintf(p, sizeof p, "/sys/class/power_supply/%s/status", e->d_name);
+        if ((f = fopen(p, "r"))) { if (fgets(buf, sizeof buf, f)) *charging = !strncmp(buf, "Charging", 8); fclose(f); }
+    }
+    closedir(d);
+    return pct;
+}
+
+static void draw_battery(cairo_t *cr, double x, double y, double s, int pct, bool charging, nx_color c)
+{
+    double w = s * 1.15, h = s * 0.56, by = y + (s - h) / 2;
+    nx_rounded_rect(cr, x, by, w, h, h * 0.22);
+    nx_set(cr, c);
+    cairo_set_line_width(cr, 1.6);
+    cairo_stroke(cr);
+    cairo_rectangle(cr, x + w + 1, by + h * 0.3, 2.5, h * 0.4);
     cairo_fill(cr);
+    double fw = (w - 5) * (pct < 0 ? 0 : pct > 100 ? 1 : pct / 100.0);
+    nx_rounded_rect(cr, x + 2.5, by + 2.5, fw, h - 5, 1.5);
+    nx_set(cr, pct <= 15 && !charging ? nx_rgb("#ff6b6b") : charging ? nx_rgb("#4cd07d") : c);
+    cairo_fill(cr);
+}
+
+/* Position du bouton N, pour la flèche du menu Démarrer ($XDG_RUNTIME_DIR/nexus-dock) */
+static void publish_start_x(double x)
+{
+    static int last = -1;
+    if ((int)x == last) return;
+    last = (int)x;
+    const char *rt = getenv("XDG_RUNTIME_DIR");
+    char p[256];
+    snprintf(p, sizeof p, "%s/nexus-dock", rt ? rt : "/tmp");
+    FILE *f = fopen(p, "w");
+    if (f) { fprintf(f, "%d\n", last); fclose(f); }
 }
 
 static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
 {
     (void)w;
     nbtns = 0;
-    nx_color white = nx_fg(1);   /* premier plan (suit le thème) */
-
-    /* Fond : verre sombre */
-    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-    nx_glass_source(cr, 0, height);
+    nx_color white = nx_fg(1);
+    double bar_y = LIFT;                  /* haut de la barre (sous le dock qui dépasse) */
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
     cairo_paint(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-    cairo_rectangle(cr, 0, 0, width, 1);
+
+    /* ---- Barre : verre sur toute la largeur, coins supérieurs arrondis ---- */
+    nx_rounded_rect(cr, 0, bar_y, width, height - bar_y + 40, 26);
+    nx_glass_source(cr, bar_y, height);
+    cairo_fill_preserve(cr);
     nx_set(cr, nx_fg(0.10));
-    cairo_fill(cr);
+    cairo_set_line_width(cr, 1);
+    cairo_stroke(cr);
 
-    double x = 8;
-    /* Bouton Démarrer et recherche */
-    button_bg(cr, x, BTN_W, nbtns);
-    nx_logo(cr, x + (BTN_W - ICON) / 2.0, (PANEL_H - ICON) / 2.0, ICON);
-    add_btn(B_START, 0, x, BTN_W);
-    x += BTN_W + 2;
-    button_bg(cr, x, BTN_W, nbtns);
-    nx_icon(cr, "search", x + (BTN_W - SMALL) / 2.0, (PANEL_H - SMALL) / 2.0, SMALL, white);
-    add_btn(B_SEARCH, 0, x, BTN_W);
-    x += BTN_W + 10;
-    cairo_rectangle(cr, x - 6, PANEL_H * 0.27, 1, PANEL_H * 0.46);
-    nx_set(cr, nx_fg(0.12));
-    cairo_fill(cr);
+    /* ---- Contenu du dock : N, loupe, épinglées, fenêtres ---- */
+    int ntask_btn = 0;
+    for (struct task *t = tasks; t; t = t->next) if (t->ready && !pin_of(t)) ntask_btn++;
+    double cell = CELL, pad = DOCK_H * 0.18;
+    int n = 2 + npins + ntask_btn;
+    double sep = ntask_btn ? 14 : 0;
+    double dw = pad * 2 + n * cell + 14 + sep;           /* 14 : séparateur après la loupe */
+    double right_w = 300 * tk();
+    double dx = (width - dw) / 2;
+    if (dx + dw > width - right_w) dx = width - right_w - dw;
+    if (dx < 8) dx = 8;
+    double dy = 4, dh = DOCK_H;
+    /* ombre + verre plus marqué + liseré clair */
+    for (int i = 6; i > 0; i--) {
+        nx_rounded_rect(cr, dx - i, dy - i + 4, dw + 2 * i, dh + 2 * i, dh / 2 + i);
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.045);
+        cairo_fill(cr);
+    }
+    nx_rounded_rect(cr, dx, dy, dw, dh, dh / 2.6);
+    nx_glass_source(cr, dy, dy + dh);
+    cairo_fill_preserve(cr);
+    cairo_fill_preserve(cr);
+    nx_set(cr, nx_fg(0.16));
+    cairo_set_line_width(cr, 1.2);
+    cairo_stroke(cr);
 
-    /* Applications épinglées */
+    double isz = ICON, iy = dy + (dh - isz) / 2 - 2, by = dy + 4, bh = dh - 8;
+    double x = dx + pad;
+    /* N */
+    button_bg(cr, x, cell, by, bh, nbtns);
+    nx_logo(cr, x + (cell - isz) / 2, iy, isz);
+    publish_start_x(x + cell / 2);
+    add_btn(B_START, 0, x, cell);
+    x += cell;
+    /* loupe */
+    button_bg(cr, x, cell, by, bh, nbtns);
+    nx_icon(cr, "search", x + (cell - isz * 0.62) / 2, iy + isz * 0.19, isz * 0.62, white);
+    add_btn(B_SEARCH, 0, x, cell);
+    x += cell + 7;
+    cairo_rectangle(cr, x - 4, dy + dh * 0.28, 1, dh * 0.44);
+    nx_set(cr, nx_fg(0.14));
+    cairo_fill(cr);
+    x += 7;
+    /* épinglées */
     for (int i = 0; i < npins; i++) {
         int count = 0;
         bool active = false;
         for (struct task *t = tasks; t; t = t->next)
             if (t->ready && pin_of(t) == pins[i]) { count++; active |= t->activated && !t->minimized; }
-        button_bg(cr, x, BTN_W, nbtns);
-        nx_app_icon(cr, pins[i]->icon, x + (BTN_W - ICON) / 2.0, (PANEL_H - ICON) / 2.0 - 2, ICON, white);
-        indicator(cr, x + BTN_W / 2.0, count, active);
-        add_btn(B_PIN, i, x, BTN_W);
-        x += BTN_W + 2;
+        button_bg(cr, x, cell, by, bh, nbtns);
+        nx_app_icon(cr, pins[i]->icon, x + (cell - isz) / 2, iy, isz, white);
+        indicator(cr, x + cell / 2, dy + dh - 6, count, active);
+        add_btn(B_PIN, i, x, cell);
+        x += cell;
     }
-    /* Autres fenêtres ouvertes */
+    /* autres fenêtres */
+    if (ntask_btn) {
+        cairo_rectangle(cr, x + 6, dy + dh * 0.28, 1, dh * 0.44);
+        nx_set(cr, nx_fg(0.14));
+        cairo_fill(cr);
+        x += sep;
+    }
     int ti = 0;
     for (struct task *t = tasks; t; t = t->next, ti++) {
         if (!t->ready || pin_of(t)) continue;
-        if (x + BTN_W > width - 200) break;
-        button_bg(cr, x, BTN_W, nbtns);
-        nx_app_icon(cr, task_icon(t), x + (BTN_W - ICON) / 2.0, (PANEL_H - ICON) / 2.0 - 2, ICON, white);
-        indicator(cr, x + BTN_W / 2.0, 1, t->activated && !t->minimized);
-        add_btn(B_TASK, ti, x, BTN_W);
-        x += BTN_W + 2;
+        button_bg(cr, x, cell, by, bh, nbtns);
+        nx_app_icon(cr, task_icon(t), x + (cell - isz) / 2, iy, isz, white);
+        indicator(cr, x + cell / 2, dy + dh - 6, 1, t->activated && !t->minimized);
+        add_btn(B_TASK, ti, x, cell);
+        x += cell;
     }
 
-    /* Zone de droite : réseau, heure, date */
+    /* ---- Zone de droite : ^, réseau, son, batterie | heure ---- */
     time_t now = time(NULL);
     struct tm tm;
     localtime_r(&now, &tm);
     char hm[8], date[16];
     snprintf(hm, sizeof hm, "%02d:%02d", tm.tm_hour, tm.tm_min);
     snprintf(date, sizeof date, "%02d/%02d/%04d", tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900);
-    double k = tk(), cw = 96 * k, cx = width - cw - 8;
-    button_bg(cr, cx, cw, nbtns);
-    if (PANEL_H < 48) {           /* petite barre : l'heure seule */
-        nx_text(cr, hm, 13.5 * k, true, white, cx, 0, cw, PANEL_H, NX_CENTER);
-    } else {
-        nx_text(cr, hm, 13.5 * k, true, white, cx, PANEL_H / 2.0 - 20 * k, cw, 21 * k, NX_CENTER);
-        nx_text(cr, date, 11.5 * k, false, nx_alpha(white, 0.75), cx, PANEL_H / 2.0, cw, 19 * k, NX_CENTER);
-    }
+    double k = tk(), mid = bar_y + (height - bar_y) / 2.0, ty = bar_y + 4, th = height - bar_y - 8;
+    double cw = 100 * k, cx = width - cw - 14;
+    button_bg(cr, cx, cw, ty, th, nbtns);
+    nx_text(cr, hm, 17 * k, true, white, cx, mid - 21 * k, cw, 22 * k, NX_CENTER);
+    nx_text(cr, date, 12.5 * k, false, nx_alpha(white, 0.8), cx, mid + 1, cw, 19 * k, NX_CENTER);
     add_btn(B_CLOCK, 0, cx, cw);
-    /* Son (si une carte son est présente) */
-    double sw = 40 * k, si = 22 * k, rx = cx - sw - 4;
+    cairo_rectangle(cr, cx - 8, mid - th * 0.32, 1, th * 0.64);
+    nx_set(cr, nx_fg(0.18));
+    cairo_fill(cr);
+    double sw = 38 * k, si = 22 * k, rx = cx - 16 - sw;
+    /* batterie */
+    bool charging = false;
+    int pct = battery(&charging);
+    if (pct >= 0) {
+        button_bg(cr, rx, sw, ty, th, nbtns);
+        draw_battery(cr, rx + (sw - si * 1.2) / 2, mid - si / 2, si, pct, charging, white);
+        add_btn(B_BAT, 0, rx, sw);
+        rx -= sw;
+    }
+    /* son */
     const char *vol = nx_volume_icon();
     if (vol) {
-        button_bg(cr, rx, sw, nbtns);
-        nx_icon(cr, vol, rx + (sw - si) / 2, (PANEL_H - si) / 2.0, si, white);
+        button_bg(cr, rx, sw, ty, th, nbtns);
+        nx_icon(cr, vol, rx + (sw - si) / 2, mid - si / 2, si, white);
         add_btn(B_VOL, 0, rx, sw);
-        rx -= sw + 2;
+        rx -= sw;
     }
-    /* Réseau : Ethernet, Wi-Fi, ou déconnecté */
+    /* réseau */
     bool up;
     const char *net = nx_network_icon(&up);
-    button_bg(cr, rx, sw, nbtns);
-    nx_icon(cr, net, rx + (sw - si) / 2, (PANEL_H - si) / 2.0, si, nx_alpha(white, up ? 0.95 : 0.35));
+    button_bg(cr, rx, sw, ty, th, nbtns);
+    nx_icon(cr, net, rx + (sw - si) / 2, mid - si / 2, si, nx_alpha(white, up ? 0.95 : 0.35));
     if (!up) {
         cairo_set_source_rgb(cr, 1, 0.4, 0.4);
         cairo_set_line_width(cr, 2);
-        double my = PANEL_H / 2.0 + 4;
-        double mx = rx + (sw + si) / 2 - 7 * k;
+        double my = mid + 4, mx = rx + (sw + si) / 2 - 7 * k;
         cairo_move_to(cr, mx, my); cairo_line_to(cr, mx + 7 * k, my + 7 * k);
         cairo_move_to(cr, mx + 7 * k, my); cairo_line_to(cr, mx, my + 7 * k);
         cairo_stroke(cr);
     }
     add_btn(B_NET, 0, rx, sw);
+    rx -= sw;
+    /* ^ : raccourcis (Paramètres) */
+    button_bg(cr, rx, sw, ty, th, nbtns);
+    cairo_move_to(cr, rx + sw / 2 - 6 * k, mid + 3 * k);
+    cairo_line_to(cr, rx + sw / 2, mid - 3 * k);
+    cairo_line_to(cr, rx + sw / 2 + 6 * k, mid + 3 * k);
+    nx_set(cr, white);
+    cairo_set_line_width(cr, 2);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+    cairo_stroke(cr);
+    add_btn(B_MORE, 0, rx, sw);
 
-    /* Poignée de redimensionnement : liseré coloré sur le bord supérieur */
+    /* Poignée de redimensionnement : liseré coloré sur le bord supérieur de la barre */
     if (grip_hover || resizing) {
-        cairo_rectangle(cr, 0, 0, width, 3);
+        nx_rounded_rect(cr, 20, bar_y, width - 40, 3, 1.5);
         nx_set(cr, nx_accent_color());
-        cairo_fill(cr);
-        nx_rounded_rect(cr, width / 2.0 - 30, 4, 60, 4, 2);
-        nx_set(cr, nx_fg(0.7));
         cairo_fill(cr);
     }
 }
 
 static void set_height(int h)
 {
-    if (h < 36) h = 36;
+    if (h < 44) h = 44;
     if (h > 110) h = 110;
     if (h == cur_h) return;
     cur_h = h;
-    zwlr_layer_surface_v1_set_size(panel->layer, 0, h);
+    zwlr_layer_surface_v1_set_size(panel->layer, 0, h + LIFT);
     zwlr_layer_surface_v1_set_exclusive_zone(panel->layer, h);
     wl_surface_commit(panel->surface);
 }
@@ -326,7 +443,7 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
     if (resizing) {
         if (ev == NX_MOTION) {
             /* y est relatif à la barre, dont le haut bouge : y - hauteur ne dépend que du curseur */
-            set_height(grip_h0 - (int)((y - cur_h) - grip_y0));
+            set_height(grip_h0 - (int)((y - (cur_h + LIFT)) - grip_y0));
             nx_redraw(w);
         } else if (ev == NX_RELEASE) {
             resizing = false;
@@ -337,12 +454,12 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
         }
         return;
     }
-    bool g = ev != NX_LEAVE && y < GRIP;
+    bool g = ev != NX_LEAVE && y < GRIP && h < 0;
     if (g != grip_hover) { grip_hover = g; nx_redraw(w); }
     if (g && ev == NX_PRESS && value == BTN_LEFT) {
         resizing = true;
         grip_h0 = cur_h;
-        grip_y0 = y - cur_h;
+        grip_y0 = y - (cur_h + LIFT);
         return;
     }
     if (g) return;
@@ -362,6 +479,8 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
                 case B_NET: nx_spawn("nexus-network"); break;
                 case B_VOL: nx_spawn("nexus-volume"); break;
                 case B_CLOCK: nx_spawn("nexus-settings --about"); break;
+                case B_MORE: nx_spawn("nexus-settings"); break;
+                case B_BAT: nx_spawn("nexus-monitor"); break;
                 }
             } else if (value == BTN_MIDDLE && b->kind == B_TASK) {
                 struct task *t = task_at(b->index);
@@ -412,7 +531,7 @@ int panel_main(int argc, char **argv)
     panel = nx_layer_window(h, ZWLR_LAYER_SHELL_V1_LAYER_TOP,
                             ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
                             ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
-                            0, PANEL_H, PANEL_H,
+                            0, PANEL_H + LIFT, PANEL_H,
                             ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE, "nexus-panel");
     if (!panel) return 1;
     if (nx.toplevels) zwlr_foreign_toplevel_manager_v1_add_listener(nx.toplevels, &manager_listener, NULL);

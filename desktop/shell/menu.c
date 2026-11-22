@@ -1,18 +1,18 @@
-/* nexus-menu — le menu Démarrer de Nexus OS (thème "verre" sombre).
+/* nexus-menu — le menu Démarrer de Nexus OS (thème "verre").
  *
- *  ┌──────────────┬───────────────────────────────────────────┐
- *  │  N           │ [ Rechercher une application, un fichier ] │
- *  │ ▸ Accueil    │ Applications épinglées          Tout voir →│
- *  │   Applications│  [ ] [ ] [ ] [ ]                          │
- *  │   Fichiers   │  [ ] [ ] [ ] [ ]                          │
- *  │   Paramètres │ Récents                             Plus → │
- *  │   Système    │  fichier.png   Il y a 2 min               │
- *  │   Alimentation│                                          │
- *  │ (o) nicolas  │                                           │
- *  │ ⏻ Éteindre   │                                           │
- *  └──────────────┴───────────────────────────────────────────┘
+ *  ╭──────────────┬───────────────────────────────────────────╮
+ *  │    (o)       │ ( 🔍 Rechercher des apps, fichiers…      ) │
+ *  │   nicolas    │ Apps épinglées              Toutes les apps│
+ *  │ ⏻ Marche/Arrêt│  [ ] [ ] [ ] [ ]                         │
+ *  │ ⚙ Paramètres │  [ ] [ ] [ ] [ ]                          │
+ *  │ 🔒 Verrouiller│ ───────────────────────────────────────  │
+ *  │              │ Recommandé                    Tout afficher│
+ *  │ ─────────    │ [📄 Document     Modifié aujourd'hui…   >] │
+ *  │ Mode simplifié (o)                                       │
+ *  ╰──────────────┴───────────────────▽───────────────────────╯
+ *  Centré au-dessus du dock, une flèche pointe vers le bouton N.
  *
- * Pages : Accueil, Applications (liste complète), Alimentation, et la
+ * Pages : Accueil, Applications (liste complète), Marche/Arrêt, et la
  * recherche (applications + fichiers du dossier personnel).
  * Clavier : taper = rechercher, flèches, Entrée, Échap.
  * Un deuxième lancement ferme le menu (bouton N ou touche Super).
@@ -29,12 +29,13 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #include <linux/input-event-codes.h>
 
-#define MENU_W  800
-#define MENU_H  610
-#define NAV_W   224
+#define MENU_W  880
+#define MENU_H  690
+#define NAV_W   240
 
 /* ======================= Applications (.desktop) ======================= */
 
@@ -145,8 +146,8 @@ static const char *app_icon(const struct app *a)
 }
 
 /* Applications épinglées sur l'accueil (si installées) */
-static const char *pinned_ids[] = { "nexus-files", "nexus-browser", "nexus-store", "nexus-terminal", "nexus-settings", "nexus-editor",
-                                    "nexus-monitor", "nexus-about" };
+static const char *pinned_ids[] = { "nexus-browser", "nexus-files", "nexus-photos", "nexus-store",
+                                    "nexus-settings", "nexus-editor", "nexus-calculator", "nexus-terminal" };
 static int pinned[8], npinned;
 
 /* ======================= Fichiers (récents, recherche) ======================= */
@@ -175,9 +176,10 @@ static void open_path(const char *path)
     nx_shell_quote(q, sizeof q, path);
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) snprintf(cmd, sizeof cmd, "nexus-files %s", q);
-    else if (!strcasecmp(ext_of(path), "png")) snprintf(cmd, sizeof cmd, "nexus-files --view %s", q);
+    else if (!strcasecmp(ext_of(path), "png") || !strcasecmp(ext_of(path), "jpg") || !strcasecmp(ext_of(path), "jpeg"))
+        snprintf(cmd, sizeof cmd, "nexus-files --view %s", q);
     else if (!strcmp(file_icon(path), "editor"))
-        snprintf(cmd, sizeof cmd, "foot --app-id=nexus-editor --title='Éditeur de texte' nano %s", q);
+        snprintf(cmd, sizeof cmd, "nexus-editor %s", q);
     else {
         char dir[1024];
         snprintf(dir, sizeof dir, "%s", path);
@@ -192,6 +194,76 @@ static void open_path(const char *path)
 
 static struct nx_recent recents[4];
 static int nrecents;
+
+/* « Recommandé » : fichiers récents, puis dossiers habituels */
+struct reco { char path[1024], title[128], sub[160]; const char *icon; nx_color color; };
+static struct reco recos[3];
+static int nrecos;
+
+static void when_text(char *out, size_t n, time_t t)
+{
+    time_t now = time(NULL);
+    struct tm a, b;
+    localtime_r(&t, &a);
+    localtime_r(&now, &b);
+    if (a.tm_year == b.tm_year && a.tm_yday == b.tm_yday) snprintf(out, n, "aujourd'hui à %02d:%02d", a.tm_hour, a.tm_min);
+    else if (a.tm_year == b.tm_year && a.tm_yday == b.tm_yday - 1) snprintf(out, n, "hier à %02d:%02d", a.tm_hour, a.tm_min);
+    else snprintf(out, n, "le %02d/%02d à %02d:%02d", a.tm_mday, a.tm_mon + 1, a.tm_hour, a.tm_min);
+}
+
+static void load_recos(void)
+{
+    nrecos = 0;
+    for (int i = 0; i < nrecents && nrecos < 2; i++) {
+        struct stat st;
+        if (stat(recents[i].path, &st) != 0) continue;
+        struct reco *r = &recos[nrecos++];
+        snprintf(r->path, sizeof r->path, "%s", recents[i].path);
+        snprintf(r->title, sizeof r->title, "%s", strrchr(r->path, '/') + 1);
+        char w[64];
+        when_text(w, sizeof w, st.st_mtime);
+        const char *ic = file_icon(r->path);
+        bool img = !strcmp(ic, "image");
+        snprintf(r->sub, sizeof r->sub, "%s %s", img ? "Ajouté" : "Modifié", w);
+        r->icon = img ? "image" : "file";
+        r->color = img ? nx_rgb("#8e5bd8") : nx_rgb("#3d8bff");
+    }
+    /* compléter avec Téléchargements, Documents, Images */
+    static const struct { const char *dir, *icon, *color; } dirs[] = {
+        { "Téléchargements", "downloads", "#2fb36a" }, { "Documents", "folder", "#f0a830" },
+        { "Images", "image", "#8e5bd8" },
+    };
+    const char *home = getenv("HOME");
+    for (unsigned k = 0; k < 3 && nrecos < 3 && home; k++) {
+        char p[1024];
+        snprintf(p, sizeof p, "%s/%s", home, dirs[k].dir);
+        DIR *d = opendir(p);
+        if (!d) continue;
+        int count = 0;
+        time_t newest = 0;
+        struct dirent *e;
+        while ((e = readdir(d))) {
+            if (e->d_name[0] == '.') continue;
+            char f[1300];
+            snprintf(f, sizeof f, "%s/%s", p, e->d_name);
+            struct stat st;
+            if (stat(f, &st) == 0) { count++; if (st.st_mtime > newest) newest = st.st_mtime; }
+        }
+        closedir(d);
+        struct reco *r = &recos[nrecos++];
+        snprintf(r->path, sizeof r->path, "%s", p);
+        snprintf(r->title, sizeof r->title, "%s", dirs[k].dir);
+        if (count) {
+            char w[64];
+            when_text(w, sizeof w, newest);
+            snprintf(r->sub, sizeof r->sub, "%d fichier%s · Mis à jour %s", count, count > 1 ? "s" : "", w);
+        } else {
+            snprintf(r->sub, sizeof r->sub, "Dossier vide");
+        }
+        r->icon = dirs[k].icon;
+        r->color = nx_rgb(dirs[k].color);
+    }
+}
 
 /* Résultats de recherche : applications puis fichiers */
 struct result { bool is_app; int app; char path[1024]; };
@@ -246,7 +318,7 @@ static void refilter(void)
 /* ======================= Zones cliquables ======================= */
 
 enum kind { K_OUTSIDE, K_INSIDE, K_NAV, K_USER, K_SHUTDOWN, K_SEARCH, K_PIN, K_SEEALL, K_RECENT,
-            K_MORE, K_APP, K_RESULT, K_BACK, K_POWER };
+            K_MORE, K_APP, K_RESULT, K_BACK, K_POWER, K_SIMPLE };
 struct rect { double x, y, w, h; enum kind kind; int index; };
 static struct rect rects[96];
 static int nrects;
@@ -258,15 +330,12 @@ static void add_rect(double x, double y, double w, double h, enum kind k, int i)
 }
 static bool hot(enum kind k, int i) { return (int)k == hover_kind && i == hover_index; }
 
-/* Navigation de gauche */
+/* Colonne de gauche */
 struct nav { const char *label, *icon; int page; const char *cmd; };
 static const struct nav navs[] = {
-    { "Accueil", "home", P_HOME, NULL },
-    { "Applications", "apps", P_APPS, NULL },
-    { "Fichiers", "folder", -1, "nexus-files" },
+    { "Marche/Arrêt", "power", P_POWER, NULL },
     { "Paramètres", "settings", -1, "nexus-settings" },
-    { "Système", "display", -1, "nexus-settings --about" },
-    { "Alimentation", "power", P_POWER, NULL },
+    { "Verrouiller", "lock", -1, "nexus-lock" },
 };
 #define NNAV ((int)(sizeof navs / sizeof navs[0]))
 
@@ -280,30 +349,70 @@ static const struct power powers[] = {
 
 /* ======================= Dessin ======================= */
 
-struct box { double x, y, w, h, cx, cw; };
+struct box { double x, y, w, h, cx, cw, arrow; };
+static int start_x = -1;                 /* centre du bouton N (écran), lu au lancement */
+static double cur_scale = 1;
+
 static struct box box_of(int width, int height)
 {
-    (void)width;
     struct box b;
     b.w = MENU_W;
-    b.h = MENU_H < height - 16 ? MENU_H : height - 16;
-    b.x = 8;
-    b.y = height - b.h - 8;
-    b.cx = b.x + NAV_W + 22;
-    b.cw = b.w - NAV_W - 44;
+    /* mode simplifié, accueil : pas de « Recommandé », menu moins haut */
+    double mh = nx_conf.simple && page == P_HOME && !search[0] ? 570 : MENU_H;
+    b.h = mh < height - 24 ? mh : height - 24;
+    double ax = start_x > 0 ? start_x / cur_scale : width / 2.0;
+    b.x = ax - b.w * 0.40;                  /* la flèche tombe à 40 % de la largeur, comme N */
+    if (b.x + b.w > width - 10) b.x = width - 10 - b.w;
+    if (b.x < 10) b.x = 10;
+    b.arrow = ax;
+    if (b.arrow < b.x + 30) b.arrow = b.x + 30;
+    if (b.arrow > b.x + b.w - 30) b.arrow = b.x + b.w - 30;
+    b.y = height - b.h - 16;
+    b.cx = b.x + NAV_W + 28;
+    b.cw = b.w - NAV_W - 56;
     return b;
 }
 
+static void chevron(cairo_t *cr, double x, double cy, double s, nx_color c)
+{
+    cairo_move_to(cr, x, cy - s);
+    cairo_line_to(cr, x + s * 0.8, cy);
+    cairo_line_to(cr, x, cy + s);
+    nx_set(cr, c);
+    cairo_set_line_width(cr, 2);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+    cairo_stroke(cr);
+}
+
+/* Titre de section (gras) + bouton « pilule » à droite */
 static void section_header(cairo_t *cr, double x, double y, double w, const char *title, const char *link,
                            enum kind k)
 {
-    nx_text(cr, title, 16, true, nx_rgb(NX_GLASS_TEXT), x, y, 0, 26, NX_LEFT);
+    nx_text(cr, title, 19, true, nx_rgb(NX_GLASS_TEXT), x, y, 0, 32, NX_LEFT);
     if (!link) return;
-    nx_color a = nx_mix(nx_accent_color(), nx_conf.theme ? nx_rgb("#000000") : nx_rgb("#ffffff"),
-                        hot(k, 0) ? 0.45 : 0.25);
-    double lw = nx_text_width(cr, link, 13.5, false);
-    nx_text(cr, link, 13.5, false, a, x + w - lw - 4, y, 0, 26, NX_LEFT);
-    add_rect(x + w - lw - 10, y, lw + 12, 26, k, 0);
+    double lw = nx_text_width(cr, link, 13.5, true), bw = lw + 40, bx = x + w - bw;
+    nx_rounded_rect(cr, bx, y + 1, bw, 30, 15);
+    nx_set(cr, nx_fg(hot(k, 0) ? 0.16 : 0.08));
+    cairo_fill(cr);
+    nx_text(cr, link, 13.5, true, nx_rgb(NX_GLASS_TEXT), bx + 14, y + 1, lw, 30, NX_LEFT);
+    chevron(cr, bx + bw - 18, y + 16, 4.5, nx_rgb(NX_GLASS_TEXT));
+    add_rect(bx, y + 1, bw, 30, k, 0);
+}
+
+/* Lueur d'accent autour d'un rectangle arrondi */
+static void glow(cairo_t *cr, double x, double y, double w, double h, double r, nx_color a)
+{
+    for (int i = 5; i >= 1; i--) {
+        nx_rounded_rect(cr, x - i, y - i, w + 2 * i, h + 2 * i, r + i);
+        nx_set(cr, nx_alpha(a, 0.06));
+        cairo_set_line_width(cr, 2);
+        cairo_stroke(cr);
+    }
+    nx_rounded_rect(cr, x, y, w, h, r);
+    nx_set(cr, a);
+    cairo_set_line_width(cr, 2);
+    cairo_stroke(cr);
 }
 
 static void draw_list_item(cairo_t *cr, double x, double y, double w, double h, const char *icon,
@@ -334,88 +443,96 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
     nx_color accent = nx_accent_color(), white = nx_fg(1);
     nx_color text = nx_rgb(NX_GLASS_TEXT), subtle = nx_rgb(NX_GLASS_SUBTLE);
 
-    nx_glass(cr, b.x, b.y, b.w, b.h, 16);
+    /* ---- Fond : verre + flèche vers le bouton N ---- */
+    nx_glass(cr, b.x, b.y, b.w, b.h, 24);
+    cairo_move_to(cr, b.arrow - 13, b.y + b.h - 1);
+    cairo_line_to(cr, b.arrow, b.y + b.h + 13);
+    cairo_line_to(cr, b.arrow + 13, b.y + b.h - 1);
+    cairo_close_path(cr);
+    nx_glass_source(cr, b.y, b.y + b.h + 14);
+    cairo_fill(cr);
     add_rect(b.x, b.y, b.w, b.h, K_INSIDE, 0);
 
-    /* ---- Colonne de navigation ---- */
-    cairo_save(cr);
-    nx_rounded_rect(cr, b.x, b.y, b.w, b.h, 16);
-    cairo_clip(cr);
-    cairo_rectangle(cr, b.x, b.y, NAV_W, b.h);
-    cairo_set_source_rgba(cr, 0, 0, 0, 0.22);
+    /* ---- Colonne de gauche : profil, actions, mode simplifié ---- */
+    double lx = b.x + 18, lw = NAV_W - 24;
+    nx_rounded_rect(cr, lx, b.y + 18, lw, b.h - 36, 18);
+    nx_set(cr, nx_fg(0.05));
     cairo_fill(cr);
-    cairo_restore(cr);
-    cairo_rectangle(cr, b.x + NAV_W, b.y + 16, 1, b.h - 32);
-    nx_set(cr, nx_fg(0.08));
+    double ax = lx + lw / 2, ay = b.y + 96, ar = 44;
+    cairo_pattern_t *g = cairo_pattern_create_linear(ax - ar, ay - ar, ax + ar, ay + ar);
+    nx_color a2 = nx_mix(accent, nx_rgb("#a86bff"), 0.55);
+    cairo_pattern_add_color_stop_rgb(g, 0, accent.r, accent.g, accent.b);
+    cairo_pattern_add_color_stop_rgb(g, 1, a2.r, a2.g, a2.b);
+    cairo_new_path(cr);
+    cairo_arc(cr, ax, ay, ar, 0, 2 * M_PI);
+    cairo_set_source(cr, g);
     cairo_fill(cr);
-    nx_logo(cr, b.x + 22, b.y + 22, 44);
+    cairo_pattern_destroy(g);
+    nx_icon(cr, "user", ax - ar * 0.62, ay - ar * 0.62, ar * 1.24, nx_rgb("#ffffff"));
+    nx_text(cr, username, 21, true, text, lx, ay + ar + 12, lw, 32, NX_CENTER);
+    add_rect(ax - ar, ay - ar, 2 * ar, 2 * ar, K_USER, 0);
     for (int i = 0; i < NNAV; i++) {
-        double y = b.y + 92 + i * 50, x = b.x + 12, nw = NAV_W - 24;
+        double y = b.y + 232 + i * 62, x = lx + 8, nw = lw - 16;
         bool cur = navs[i].page == (int)page && !search[0];
-        if (cur) {
-            cairo_pattern_t *g = cairo_pattern_create_linear(x, 0, x + nw, 0);
-            cairo_pattern_add_color_stop_rgba(g, 0, accent.r, accent.g, accent.b, 0.95);
-            cairo_pattern_add_color_stop_rgba(g, 1, accent.r, accent.g, accent.b, 0.55);
-            nx_rounded_rect(cr, x, y, nw, 44, 10);
-            cairo_set_source(cr, g);
-            cairo_fill(cr);
-            cairo_pattern_destroy(g);
-        } else if (hot(K_NAV, i)) {
-            nx_rounded_rect(cr, x, y, nw, 44, 10);
-            nx_set(cr, nx_fg(0.08));
+        if (cur || hot(K_NAV, i)) {
+            nx_rounded_rect(cr, x, y, nw, 52, 14);
+            nx_set(cr, nx_fg(cur ? 0.13 : 0.08));
             cairo_fill(cr);
         }
-        nx_icon(cr, navs[i].icon, x + 14, y + 11, 22, white);
-        nx_text(cr, navs[i].label, 14.5, cur, cur ? white : text, x + 48, y, nw - 56, 44, NX_LEFT);
-        add_rect(x, y, nw, 44, K_NAV, i);
+        nx_icon(cr, navs[i].icon, x + 16, y + 13, 26, white);
+        nx_text(cr, navs[i].label, 16, true, text, x + 56, y, nw - 62, 52, NX_LEFT);
+        add_rect(x, y, nw, 52, K_NAV, i);
     }
-    /* Compte et Éteindre en bas */
-    double uy = b.y + b.h - 108;
-    if (hot(K_USER, 0)) {
-        nx_rounded_rect(cr, b.x + 12, uy, NAV_W - 24, 48, 10);
-        nx_set(cr, nx_fg(0.08));
-        cairo_fill(cr);
-    }
-    nx_icon(cr, "user", b.x + 22, uy + 7, 34, white);
-    nx_text(cr, username, 14, true, text, b.x + 66, uy, NAV_W - 86, 48, NX_LEFT);
-    add_rect(b.x + 12, uy, NAV_W - 24, 48, K_USER, 0);
-    double sy = b.y + b.h - 56;
-    if (hot(K_SHUTDOWN, 0)) {
-        nx_rounded_rect(cr, b.x + 12, sy, NAV_W - 24, 44, 10);
-        cairo_set_source_rgba(cr, 1, 0.35, 0.35, 0.18);
-        cairo_fill(cr);
-    }
-    nx_icon(cr, "power", b.x + 26, sy + 11, 22, white);
-    nx_text(cr, "Éteindre", 14.5, false, text, b.x + 60, sy, NAV_W - 80, 44, NX_LEFT);
-    add_rect(b.x + 12, sy, NAV_W - 24, 44, K_SHUTDOWN, 0);
-
-    /* ---- Barre de recherche ---- */
-    double sx = b.cx, sw = b.cw, sh = 48, syy = b.y + 22;
-    nx_rounded_rect(cr, sx, syy, sw, sh, 12);
-    nx_set(cr, nx_fg(search[0] ? 0.10 : 0.06));
+    cairo_rectangle(cr, lx + 16, b.y + 232 + NNAV * 62 + 8, lw - 32, 1);
+    nx_set(cr, nx_fg(0.10));
+    cairo_fill(cr);
+    /* Mode simplifié */
+    double my = b.y + b.h - 18 - 16 - 70, mx = lx + 6, mw = lw - 12;
+    nx_rounded_rect(cr, mx, my, mw, 70, 16);
+    nx_set(cr, nx_fg(hot(K_SIMPLE, 0) ? 0.12 : 0.08));
     cairo_fill_preserve(cr);
-    if (search[0]) nx_set(cr, nx_alpha(accent, 0.8)); else nx_set(cr, nx_fg(0.12));
-    cairo_set_line_width(cr, search[0] ? 1.6 : 1);
+    nx_set(cr, nx_fg(0.12));
+    cairo_set_line_width(cr, 1);
     cairo_stroke(cr);
-    nx_icon(cr, "search", sx + 16, syy + 13, 22, nx_alpha(white, 0.85));
+    nx_icon(cr, "access", mx + 14, my + 21, 28, white);
+    nx_text(cr, "Mode", 15, true, text, mx + 52, my + 12, mw - 120, 22, NX_LEFT);
+    nx_text(cr, "simplifié", 15, true, text, mx + 52, my + 34, mw - 120, 22, NX_LEFT);
+    double tx = mx + mw - 62, ty = my + 22;
+    nx_rounded_rect(cr, tx, ty, 48, 26, 13);
+    nx_set(cr, nx_conf.simple ? accent : nx_fg(0.25));
+    cairo_fill(cr);
+    cairo_new_path(cr);
+    cairo_arc(cr, nx_conf.simple ? tx + 35 : tx + 13, ty + 13, 10, 0, 2 * M_PI);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_fill(cr);
+    add_rect(mx, my, mw, 70, K_SIMPLE, 0);
+
+    /* ---- Recherche (contour lumineux) ---- */
+    double sx = b.cx, sw = b.cw, sh = 56, syy = b.y + 22;
+    nx_rounded_rect(cr, sx, syy, sw, sh, 18);
+    nx_set(cr, nx_fg(0.06));
+    cairo_fill(cr);
+    glow(cr, sx, syy, sw, sh, 18, nx_mix(accent, nx_rgb("#5ad7ff"), 0.35));
+    nx_icon(cr, "search", sx + 20, syy + 15, 26, white);
     if (search[0]) {
-        double tw = nx_text(cr, search, 15, false, text, sx + 52, syy, sw - 70, sh, NX_LEFT);
-        cairo_rectangle(cr, sx + 53 + tw, syy + 13, 1.5, sh - 26);
+        double tw = nx_text(cr, search, 16.5, false, text, sx + 62, syy, sw - 80, sh, NX_LEFT);
+        cairo_rectangle(cr, sx + 63 + tw, syy + 15, 1.5, sh - 30);
         nx_set(cr, accent);
         cairo_fill(cr);
     } else {
-        nx_text(cr, "Rechercher une application, un fichier…", 15, false, subtle, sx + 52, syy, sw - 70, sh, NX_LEFT);
+        nx_text(cr, "Rechercher des apps, fichiers et réglages…", 16.5, false, nx_alpha(text, 0.85),
+                sx + 62, syy, sw - 80, sh, NX_LEFT);
     }
     add_rect(sx, syy, sw, sh, K_SEARCH, 0);
 
-    double y = syy + sh + 24;
+    double y = syy + sh + 26;
     if (search[0]) {
         /* ---- Résultats de recherche ---- */
         section_header(cr, b.cx, y, b.cw, "Résultats", NULL, K_INSIDE);
-        y += 36;
+        y += 44;
         if (nresults == 0)
             nx_text(cr, "Aucun résultat", 14, false, subtle, b.cx, y + 20, b.cw, 30, NX_CENTER);
-        for (int i = 0; i < nresults && y + 56 < b.y + b.h - 10; i++, y += 56) {
+        for (int i = 0; i < nresults && y + 58 < b.y + b.h - 14; i++, y += 60) {
             const char *icon, *title, *sub;
             char ago[64] = "";
             if (results[i].is_app) {
@@ -430,63 +547,78 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
                          hl && !strncmp(results[i].path, home, hl) ? results[i].path + hl : results[i].path);
                 sub = ago;
             }
-            draw_list_item(cr, b.cx - 6, y, b.cw + 12, 52, icon, title, sub, hot(K_RESULT, i) || i == selected);
-            add_rect(b.cx - 6, y, b.cw + 12, 52, K_RESULT, i);
+            draw_list_item(cr, b.cx - 6, y, b.cw + 12, 54, icon, title, sub, hot(K_RESULT, i) || i == selected);
+            add_rect(b.cx - 6, y, b.cw + 12, 54, K_RESULT, i);
         }
     } else if (page == P_HOME) {
-        /* ---- Applications épinglées ---- */
-        section_header(cr, b.cx, y, b.cw, "Applications épinglées", "Tout voir  →", K_SEEALL);
-        y += 38;
-        double isz = 52 * nx_icon_factor();
+        /* ---- Apps épinglées (4 × 2) ---- */
+        section_header(cr, b.cx, y, b.cw, "Apps épinglées", "Toutes les apps", K_SEEALL);
+        y += 44;
+        double isz = (nx_conf.simple ? 70 : 62);
         double cellw = b.cw / 4, cellh = isz + 52;
         for (int i = 0; i < npinned; i++) {
-            double x = b.cx + (i % 4) * cellw, cy = y + (i / 4) * cellh;
+            double x = b.cx + (i % 4) * cellw, cy = y + (i / 4) * (cellh + 6);
             struct app *a = &apps[pinned[i]];
-            if (hot(K_PIN, i)) {
-                nx_rounded_rect(cr, x + 6, cy, cellw - 12, cellh - 6, 12);
-                nx_set(cr, nx_fg(0.08));
+            bool sel = i == selected, hov = hot(K_PIN, i);
+            if (sel || hov) {
+                nx_rounded_rect(cr, x + 5, cy, cellw - 10, cellh, 18);
+                nx_set(cr, nx_fg(sel ? 0.10 : 0.07));
                 cairo_fill(cr);
+                if (sel) glow(cr, x + 5, cy, cellw - 10, cellh, 18, nx_mix(accent, nx_rgb("#5ad7ff"), 0.35));
             }
             nx_app_icon(cr, app_icon(a) + 1, x + (cellw - isz) / 2, cy + 10, isz, white);
-            nx_text(cr, a->name, 13.5, false, text, x + 4, cy + isz + 16, cellw - 8, 24, NX_CENTER);
-            add_rect(x + 6, cy, cellw - 12, cellh - 6, K_PIN, i);
+            /* noms courts pour la grille */
+            const char *nm = !strcmp(a->id, "nexus-editor") ? "Éditeur" : !strcmp(a->id, "nexus-store") ? "Magasin" :
+                             !strcmp(a->id, "nexus-browser") ? "Navigateur" : a->name;
+            nx_text(cr, nm, 14.5, true, text, x + 6, cy + isz + 18, cellw - 12, 24, NX_CENTER);
+            add_rect(x + 5, cy, cellw - 10, cellh, K_PIN, i);
         }
-        y += ((npinned + 3) / 4) * cellh + 12;
-        /* ---- Récents ---- */
-        section_header(cr, b.cx, y, b.cw, "Récents", "Plus  →", K_MORE);
-        y += 36;
-        if (nrecents == 0)
-            nx_text(cr, "Les fichiers que tu ouvres apparaîtront ici.", 13.5, false, subtle,
-                    b.cx + 4, y + 4, b.cw, 30, NX_LEFT);
-        for (int i = 0; i < nrecents && y + 56 < b.y + b.h - 10; i++, y += 56) {
-            char ago[64];
-            nx_ago(ago, sizeof ago, recents[i].when);
-            draw_list_item(cr, b.cx - 6, y, b.cw + 12, 52, file_icon(recents[i].path),
-                           strrchr(recents[i].path, '/') + 1, ago, hot(K_RECENT, i));
-            add_rect(b.cx - 6, y, b.cw + 12, 52, K_RECENT, i);
+        y += ((npinned + 3) / 4) * (cellh + 6) + 8;
+        if (!nx_conf.simple) {
+            cairo_rectangle(cr, b.cx, y, b.cw, 1);
+            nx_set(cr, nx_fg(0.10));
+            cairo_fill(cr);
+            y += 16;
+            /* ---- Recommandé ---- */
+            section_header(cr, b.cx, y, b.cw, "Recommandé", "Tout afficher", K_MORE);
+            y += 44;
+            for (int i = 0; i < nrecos && y + 64 < b.y + b.h - 14; i++, y += 72) {
+                bool hv = hot(K_RECENT, i);
+                nx_rounded_rect(cr, b.cx, y, b.cw, 64, 14);
+                nx_set(cr, nx_fg(hv ? 0.12 : 0.06));
+                cairo_fill(cr);
+                nx_rounded_rect(cr, b.cx + 14, y + 11, 42, 42, 10);
+                nx_set(cr, recos[i].color);
+                cairo_fill(cr);
+                nx_icon(cr, recos[i].icon, b.cx + 23, y + 20, 24, nx_rgb("#ffffff"));
+                nx_text(cr, recos[i].title, 15.5, true, text, b.cx + 72, y + 9, b.cw - 120, 24, NX_LEFT);
+                nx_text(cr, recos[i].sub, 13, false, subtle, b.cx + 72, y + 33, b.cw - 120, 22, NX_LEFT);
+                chevron(cr, b.cx + b.cw - 28, y + 32, 6, text);
+                add_rect(b.cx, y, b.cw, 64, K_RECENT, i);
+            }
         }
     } else if (page == P_APPS) {
         /* ---- Toutes les applications ---- */
-        section_header(cr, b.cx, y, b.cw, "Toutes les applications", "←  Retour", K_BACK);
-        y += 38;
+        section_header(cr, b.cx, y, b.cw, "Toutes les applications", "Retour", K_BACK);
+        y += 44;
         double ly = y, lh = b.y + b.h - 14 - ly;
-        int visible = (int)(lh / 56);
+        int visible = (int)(lh / 58);
         if (scroll > napps - visible) scroll = napps - visible;
         if (scroll < 0) scroll = 0;
         for (int k = 0; k < visible && scroll + k < napps; k++) {
             int i = scroll + k;
-            draw_list_item(cr, b.cx - 6, ly + k * 56, b.cw + 12, 52, app_icon(&apps[i]), apps[i].name,
+            draw_list_item(cr, b.cx - 6, ly + k * 58, b.cw + 12, 54, app_icon(&apps[i]), apps[i].name,
                            apps[i].comment, hot(K_APP, i) || i == selected);
-            add_rect(b.cx - 6, ly + k * 56, b.cw + 12, 52, K_APP, i);
+            add_rect(b.cx - 6, ly + k * 58, b.cw + 12, 54, K_APP, i);
         }
     } else {
-        /* ---- Alimentation ---- */
-        section_header(cr, b.cx, y, b.cw, "Alimentation", "←  Retour", K_BACK);
-        y += 50;
-        double cw = (b.cw - 3 * 12) / 4, ch = 150;
+        /* ---- Marche/Arrêt ---- */
+        section_header(cr, b.cx, y, b.cw, "Marche/Arrêt", "Retour", K_BACK);
+        y += 56;
+        double cw = (b.cw - 12) / 2, ch = 130;
         for (int i = 0; i < 4; i++) {
-            double x = b.cx + i * (cw + 12);
-            nx_rounded_rect(cr, x, y, cw, ch, 14);
+            double x = b.cx + (i % 2) * (cw + 12), yy = y + (i / 2) * (ch + 12);
+            nx_rounded_rect(cr, x, yy, cw, ch, 18);
             if (hot(K_POWER, i)) {
                 if (i == 0) cairo_set_source_rgba(cr, 0.9, 0.3, 0.3, 0.30);
                 else nx_set(cr, nx_alpha(accent, 0.35));
@@ -497,12 +629,12 @@ static void draw_logical(struct nx_window *w, cairo_t *cr, int width, int height
             nx_set(cr, nx_fg(0.12));
             cairo_set_line_width(cr, 1);
             cairo_stroke(cr);
-            nx_icon(cr, powers[i].icon, x + (cw - 46) / 2, y + 30, 46, white);
-            nx_text(cr, powers[i].label, 14.5, true, text, x, y + 96, cw, 30, NX_CENTER);
-            add_rect(x, y, cw, ch, K_POWER, i);
+            nx_icon(cr, powers[i].icon, x + (cw - 44) / 2, yy + 24, 44, white);
+            nx_text(cr, powers[i].label, 15.5, true, text, x, yy + 82, cw, 30, NX_CENTER);
+            add_rect(x, yy, cw, ch, K_POWER, i);
         }
         nx_text(cr, "« Se déconnecter » ferme ta session · « Verrouiller » (Super+L) protège l'écran.",
-                12.5, false, subtle, b.cx, y + ch + 18, b.cw, 22, NX_LEFT);
+                12.5, false, subtle, b.cx, y + 2 * ch + 30, b.cw, 22, NX_LEFT);
     }
 }
 
@@ -525,14 +657,21 @@ static void activate(enum kind k, int i)
         if (navs[i].cmd) run_and_quit(navs[i].cmd);
         else { page = navs[i].page; search[0] = 0; scroll = 0; selected = 0; nx_redraw(menu); }
         break;
-    case K_USER: run_and_quit("nexus-files"); break;
+    case K_USER: run_and_quit("nexus-settings --accounts"); break;
+    case K_SIMPLE:
+        nx_conf.simple = !nx_conf.simple;
+        nx_config_save(&nx_conf);
+        nx_notify_reload();
+        nx_config_load(&nx_conf);
+        nx_redraw(menu);
+        break;
     case K_SHUTDOWN: run_and_quit(powers[0].cmd); break;
     case K_SEEALL: page = P_APPS; scroll = 0; nx_redraw(menu); break;
     case K_BACK: page = P_HOME; nx_redraw(menu); break;
-    case K_MORE: run_and_quit("nexus-files"); break;
+    case K_MORE: run_and_quit("nexus-files \"$HOME/Documents\""); break;
     case K_PIN: run_and_quit(apps[pinned[i]].exec); break;
     case K_APP: run_and_quit(apps[i].exec); break;
-    case K_RECENT: open_path(recents[i].path); nx_quit(); break;
+    case K_RECENT: open_path(recos[i].path); nx_quit(); break;
     case K_RESULT: activate_result(i); break;
     case K_POWER: run_and_quit(powers[i].cmd); break;
     default: break;
@@ -570,7 +709,6 @@ static void pointer_logical(struct nx_window *w, enum nx_pointer_event ev, doubl
  * Le menu est dessiné dans un repère « logique » de 800 × 610 puis agrandi :
  * texte, icônes et marges grandissent ensemble. */
 
-static double cur_scale = 1;
 static int surf_w, surf_h;
 static int resize_mode;          /* 0 non, 1 bord haut, 2 bord droit, 3 coin haut-droit */
 static int grip_hover;
@@ -602,11 +740,16 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
 {
     surf_w = width;
     surf_h = height;
-    cur_scale = fit_scale(nx_conf.menu_scale / 100.0, width, height);
+    /* La taille du texte (et le mode simplifié) agrandit tout le menu d'un
+     * bloc : cases, marges et texte ensemble, sans texte coupé */
+    double ts = nx_scale;
+    cur_scale = fit_scale(nx_conf.menu_scale / 100.0 * ts, width, height);
+    nx_scale = 1;
     cairo_save(cr);
     cairo_scale(cr, cur_scale, cur_scale);
     draw_logical(w, cr, (int)(width / cur_scale), (int)(height / cur_scale));
     cairo_restore(cr);
+    nx_scale = ts;
     /* poignée du coin haut-droit (et liseré du bord survolé) */
     struct box b = box_of((int)(width / cur_scale), (int)(height / cur_scale));
     double rx = (b.x + b.w) * cur_scale, ty = b.y * cur_scale;
@@ -624,12 +767,13 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
 {
     if (resize_mode) {
         if (ev == NX_MOTION) {
-            /* menu ancré en bas à gauche (marge 8) : la taille suit le curseur */
-            double sx = (x - 8) / MENU_W, sy = (surf_h - y - 8) / MENU_H, s = cur_scale;
+            /* le bas du menu reste au-dessus du dock : la taille suit le curseur */
+            struct box b0 = box_of((int)(surf_w / cur_scale), (int)(surf_h / cur_scale));
+            double sx = (x - b0.x * cur_scale) / MENU_W, sy = (surf_h - y - 16) / MENU_H, s = cur_scale;
             if (resize_mode == 1) s = sy;
             else if (resize_mode == 2) s = sx;
             else s = sx > sy ? sx : sy;
-            nx_conf.menu_scale = (int)(fit_scale(s, surf_w, surf_h) * 100 + 0.5);
+            nx_conf.menu_scale = (int)(fit_scale(s, surf_w, surf_h) / nx_scale * 100 + 0.5);
             nx_redraw(w);
         } else if (ev == NX_RELEASE) {
             resize_mode = 0;
@@ -656,12 +800,21 @@ static void key(struct nx_window *w, xkb_keysym_t sym, const char *utf8)
     case XKB_KEY_Return: case XKB_KEY_KP_Enter:
         if (search[0]) activate_result(selected);
         else if (page == P_APPS && selected < napps) run_and_quit(apps[selected].exec);
+        else if (page == P_HOME && selected < npinned) run_and_quit(apps[pinned[selected]].exec);
         return;
     case XKB_KEY_Down:
-        if (search[0] ? selected < nresults - 1 : (page == P_APPS && selected < napps - 1)) selected++;
+        if (!search[0] && page == P_HOME) { if (selected + 4 < npinned) selected += 4; }
+        else if (search[0] ? selected < nresults - 1 : (page == P_APPS && selected < napps - 1)) selected++;
         break;
     case XKB_KEY_Up:
-        if (selected > 0) selected--;
+        if (!search[0] && page == P_HOME) { if (selected >= 4) selected -= 4; }
+        else if (selected > 0) selected--;
+        break;
+    case XKB_KEY_Right:
+        if (!search[0] && page == P_HOME && selected + 1 < npinned) selected++;
+        break;
+    case XKB_KEY_Left:
+        if (!search[0] && page == P_HOME && selected > 0) selected--;
         break;
     case XKB_KEY_BackSpace: {
         size_t n = strlen(search);
@@ -724,6 +877,13 @@ int menu_main(int argc, char **argv)
         for (int i = 0; i < napps; i++)
             if (!strcmp(apps[i].id, pinned_ids[k])) pinned[npinned++] = i;
     nrecents = nx_recent_load(recents, 3);
+    load_recos();
+    /* position du bouton N, publiée par la barre des tâches */
+    const char *rt = getenv("XDG_RUNTIME_DIR");
+    char dp[256];
+    snprintf(dp, sizeof dp, "%s/nexus-dock", rt ? rt : "/tmp");
+    FILE *df = fopen(dp, "r");
+    if (df) { if (fscanf(df, "%d", &start_x) != 1) start_x = -1; fclose(df); }
 
     if (!nx_init()) { unlink(pidfile); return 1; }
     struct nx_handlers h = { .draw = draw, .pointer = pointer, .key = key };

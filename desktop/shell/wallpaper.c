@@ -19,9 +19,9 @@ static const struct dicon icons[] = {
 };
 #define NICONS ((int)(sizeof icons / sizeof icons[0]))
 /* Taille des icônes selon le réglage « Icônes » (petites, moyennes, grandes) */
-#define ISZ    (54 * nx_icon_factor())
-#define ICON_W (ISZ + 50)
-#define ICON_H (ISZ + 46)
+#define ISZ    (58 * nx_icon_factor())
+#define ICON_W (ISZ + 52)
+#define ICON_H (ISZ + 50)
 
 static struct nx_window *win;
 static cairo_surface_t *cache;          /* fond d'écran déjà dessiné */
@@ -53,18 +53,22 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
         double x, y;
         icon_pos(i, &x, &y);
         if (i == selected || i == hover) {
-            nx_rounded_rect(cr, x, y, ICON_W, ICON_H, 10);
-            cairo_set_source_rgba(cr, 1, 1, 1, i == selected ? 0.18 : 0.09);
+            nx_color a = nx_accent_color();
+            nx_rounded_rect(cr, x, y, ICON_W, ICON_H, 16);
+            nx_set(cr, nx_alpha(nx_mix(a, nx_rgb("#0b1230"), 0.55), i == selected ? 0.75 : 0.45));
             cairo_fill_preserve(cr);
-            cairo_set_source_rgba(cr, 1, 1, 1, i == selected ? 0.30 : 0.12);
-            cairo_set_line_width(cr, 1);
+            nx_set(cr, nx_alpha(a, i == selected ? 0.9 : 0.45));
+            cairo_set_line_width(cr, 1.5);
             cairo_stroke(cr);
         }
         nx_icon(cr, icons[i].icon, x + (ICON_W - ISZ) / 2.0, y + 8, ISZ, nx_rgb("#ffffff"));
         /* texte blanc avec ombre portée pour rester lisible sur tous les fonds */
-        nx_text(cr, icons[i].label, 13, false, nx_alpha(nx_rgb("#000000"), 0.6),
-                x + 1, y + ISZ + 13, ICON_W, 26, NX_CENTER);
-        nx_text(cr, icons[i].label, 13, false, nx_rgb("#ffffff"), x, y + ISZ + 12, ICON_W, 26, NX_CENTER);
+        double ts = nx_scale;
+        nx_scale = ts > 1.1 ? 1.1 : ts;   /* l'étiquette doit tenir sous l'icône */
+        nx_text(cr, icons[i].label, 14.5, true, nx_alpha(nx_rgb("#000000"), 0.6),
+                x + 1, y + ISZ + 15, ICON_W, 26, NX_CENTER);
+        nx_text(cr, icons[i].label, 14.5, true, nx_rgb("#ffffff"), x, y + ISZ + 14, ICON_W, 26, NX_CENTER);
+        nx_scale = ts;
     }
 }
 

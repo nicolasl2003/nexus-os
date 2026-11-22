@@ -64,6 +64,7 @@ struct nx_config {
     bool glass_tint;     /* barre et menus teintés de la couleur d'accent */
     int theme;           /* barre, menu, panneaux : 0 sombre, 1 clair */
     int lock_minutes;    /* verrouillage après N minutes d'inactivité (0 : jamais) */
+    bool simple;         /* mode simplifié : texte et icônes plus grands, menus épurés */
 };
 
 struct nx_accent { const char *hex, *name; };

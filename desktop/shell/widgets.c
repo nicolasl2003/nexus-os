@@ -1,7 +1,10 @@
 /* nexus-widgets — les widgets du bureau (en haut à droite) :
- *   - horloge, date et message d'accueil ;
- *   - performances : processeur, mémoire, disque + courbe du processeur ;
- *   - "Mes tâches" : petite liste à cocher (~/.config/nexus/taches.txt).
+ *   - horloge et date ;
+ *   - raccourcis vers des dossiers (~/.config/nexus/raccourcis, « Ajouter
+ *     aux raccourcis » dans Fichiers) ;
+ *   - performances : processeur, mémoire, disque ;
+ *   - liste de tâches à cocher (~/.config/nexus/taches.txt) ;
+ *   - mode simplifié et taille du texte.
  * Réglables dans Paramètres → Widgets : affichage, taille, couleur.
  * À la souris : glisser une carte = déplacer les widgets ; tirer le coin en
  * bas à gauche (ou le bord gauche) = les agrandir / réduire. */
@@ -31,7 +34,8 @@ static int ntasks;          /* (défini plus bas avec la liste des tâches) */
 
 /* ---------- Taille, couleur, position ---------- */
 
-static double S = 1;                 /* échelle (widget_scale / 100) */
+static double S = 1;                 /* échelle choisie (widget_scale / 100) */
+static double Sd = 1;                /* échelle de dessin : S, réduite si l'écran est trop petit */
 static int content_h = 600;          /* hauteur logique du contenu */
 static int cur_w, cur_h;             /* taille réelle de la surface */
 static nx_color text_c, subtle_c;    /* couleurs du texte selon le style */
@@ -83,18 +87,78 @@ static void apply_geometry(void)
 {
     if (!win) return;
     S = nx_conf.widget_scale / 100.0;
-    int w = (int)(W_WIDTH * S + 0.5), h = (int)(content_h * S + 0.5);
-    zwlr_layer_surface_v1_set_margin(win->layer, nx_conf.widget_mt, nx_conf.widget_mr, 0, 0);
-    if (w != cur_w || h != cur_h) {
+    /* surface sur toute la hauteur disponible (au-dessus de la barre) : on
+     * connaît ainsi la place et on réduit l'échelle si besoin */
+    int w = (int)(W_WIDTH * S * nx_scale + 0.5);   /* le texte agrandi agrandit les cartes */
+    zwlr_layer_surface_v1_set_margin(win->layer, nx_conf.widget_mt, nx_conf.widget_mr, 6, 0);
+    if (w != cur_w) {
         cur_w = w;
-        cur_h = h;
-        zwlr_layer_surface_v1_set_size(win->layer, w, h);
+        zwlr_layer_surface_v1_set_size(win->layer, w, 0);
     }
     wl_surface_commit(win->surface);
     nx_redraw(win);
 }
 
-static int compute_content_h(void) { return 12 + 118 + 14 + 222 + 14 + 66 + ntasks * 36 + 44 + 12; }
+/* Hauteurs des cartes */
+#define H_CLOCK 104
+#define H_SHORT 138
+#define H_PERF  162
+#define H_SIMPLE 120
+#define GAP 14
+static int compute_content_h(void)
+{
+    return 12 + H_CLOCK + GAP + H_SHORT + GAP + (nx_conf.simple ? 0 : H_PERF + GAP) +
+           58 + ntasks * 34 + 40 + GAP + H_SIMPLE + 12;
+}
+
+/* ---------- Raccourcis ---------- */
+
+struct shortcut { char label[64], path[512]; const char *icon; };
+static struct shortcut shorts[4];
+static int nshorts;
+
+static void shortcuts_load(void)
+{
+    const char *home = getenv("HOME") ? getenv("HOME") : "/";
+    char p[512];
+    snprintf(p, sizeof p, "%s/.config/nexus/raccourcis", home);
+    nshorts = 0;
+    FILE *f = fopen(p, "r");
+    if (f) {
+        char line[600];
+        while (nshorts < 4 && fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\n")] = 0;
+            char *bar = strchr(line, '|');
+            if (!bar) continue;
+            *bar = 0;
+            snprintf(shorts[nshorts].label, sizeof shorts[0].label, "%s", line);
+            snprintf(shorts[nshorts].path, sizeof shorts[0].path, "%s", bar + 1);
+            shorts[nshorts].icon = "folder";
+            nshorts++;
+        }
+        fclose(f);
+    }
+    if (!nshorts) {   /* par défaut : dossier personnel, Images, Téléchargements */
+        static const struct { const char *l, *d, *i; } def[] = {
+            { "Bureau", "", "home" }, { "Images", "/Images", "image" }, { "Télécharg.", "/Téléchargements", "downloads" },
+        };
+        for (int i = 0; i < 3; i++) {
+            snprintf(shorts[i].label, sizeof shorts[0].label, "%s", def[i].l);
+            snprintf(shorts[i].path, sizeof shorts[0].path, "%s%s", home, def[i].d);
+            shorts[i].icon = def[i].i;
+        }
+        nshorts = 3;
+    }
+    /* icônes reconnues par le nom du dossier */
+    for (int i = 0; i < nshorts; i++) {
+        const char *b = strrchr(shorts[i].path, '/');
+        b = b ? b + 1 : shorts[i].path;
+        if (!strcmp(shorts[i].path, home)) shorts[i].icon = "home";
+        else if (!strcmp(b, "Images")) shorts[i].icon = "image";
+        else if (!strcmp(b, "Téléchargements")) shorts[i].icon = "downloads";
+        else if (!strcmp(b, "Documents")) shorts[i].icon = "editor";
+    }
+}
 
 /* ---------- Mesures système ---------- */
 
@@ -194,7 +258,7 @@ static void tasks_save(void)
 
 /* ---------- Zones cliquables ---------- */
 
-enum { Z_NONE, Z_CHECK, Z_DELETE, Z_ADD };
+enum { Z_NONE, Z_CHECK, Z_DELETE, Z_ADD, Z_SHORT, Z_SHORTADD, Z_SIMPLE, Z_TEXT };
 struct zone { double x, y, w, h; int kind, index; };
 static struct zone zones[32];
 static int nzones;
@@ -214,6 +278,47 @@ static nx_color wfg(double a)
     if (nx_conf.widget_style == 1) return nx_alpha(nx_rgb(NX_TEXT), a);
     if (nx_conf.widget_style == 0) return nx_fg(a);
     return nx_alpha(nx_rgb("#ffffff"), a);
+}
+
+/* Symbole blanc d'un raccourci (maison, image, téléchargement, dossier, texte) */
+static void short_glyph(cairo_t *cr, const char *icon, double x, double y, double s)
+{
+    cairo_save(cr);
+    cairo_translate(cr, x, y);
+    cairo_scale(cr, s, s);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_set_line_width(cr, 0.1);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+    if (!strcmp(icon, "home")) {
+        cairo_move_to(cr, 0.08, 0.5); cairo_line_to(cr, 0.5, 0.1); cairo_line_to(cr, 0.92, 0.5);
+        cairo_line_to(cr, 0.8, 0.5); cairo_line_to(cr, 0.8, 0.9); cairo_line_to(cr, 0.58, 0.9);
+        cairo_line_to(cr, 0.58, 0.64); cairo_line_to(cr, 0.42, 0.64); cairo_line_to(cr, 0.42, 0.9);
+        cairo_line_to(cr, 0.2, 0.9); cairo_line_to(cr, 0.2, 0.5); cairo_close_path(cr);
+        cairo_fill(cr);
+    } else if (!strcmp(icon, "image")) {
+        cairo_move_to(cr, 0.06, 0.86); cairo_line_to(cr, 0.36, 0.44); cairo_line_to(cr, 0.56, 0.68);
+        cairo_line_to(cr, 0.7, 0.52); cairo_line_to(cr, 0.94, 0.86); cairo_close_path(cr);
+        cairo_fill(cr);
+        cairo_arc(cr, 0.74, 0.24, 0.1, 0, 2 * M_PI);
+        cairo_fill(cr);
+    } else if (!strcmp(icon, "downloads")) {
+        cairo_move_to(cr, 0.5, 0.08); cairo_line_to(cr, 0.5, 0.62);
+        cairo_move_to(cr, 0.28, 0.42); cairo_line_to(cr, 0.5, 0.64); cairo_line_to(cr, 0.72, 0.42);
+        cairo_move_to(cr, 0.12, 0.72); cairo_line_to(cr, 0.12, 0.9); cairo_line_to(cr, 0.88, 0.9); cairo_line_to(cr, 0.88, 0.72);
+        cairo_stroke(cr);
+    } else if (!strcmp(icon, "editor")) {
+        cairo_rectangle(cr, 0.2, 0.08, 0.6, 0.84);
+        cairo_stroke(cr);
+        for (int i = 0; i < 3; i++) { cairo_move_to(cr, 0.32, 0.32 + i * 0.18); cairo_line_to(cr, 0.68, 0.32 + i * 0.18); }
+        cairo_stroke(cr);
+    } else {   /* dossier */
+        cairo_move_to(cr, 0.06, 0.2); cairo_line_to(cr, 0.4, 0.2); cairo_line_to(cr, 0.5, 0.32);
+        cairo_line_to(cr, 0.94, 0.32); cairo_line_to(cr, 0.94, 0.86); cairo_line_to(cr, 0.06, 0.86);
+        cairo_close_path(cr);
+        cairo_fill(cr);
+    }
+    cairo_restore(cr);
 }
 
 static const char *jours[] = { "Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi" };
@@ -279,65 +384,75 @@ static void draw_logical(cairo_t *cr)
     localtime_r(&now, &tm);
 
     /* --- Horloge --- */
-    double y = 12, ch = 118;
+    double y = 12, ch = H_CLOCK;
     card(cr, y, ch);
     char hm[8], date[64];
     snprintf(hm, sizeof hm, "%02d:%02d", tm.tm_hour, tm.tm_min);
     snprintf(date, sizeof date, "%s %d %s %d", jours[tm.tm_wday], tm.tm_mday, mois[tm.tm_mon], tm.tm_year + 1900);
-    nx_text(cr, hm, 50, true, text, CARD_X + 20, y + 14, 0, 62, NX_LEFT);
-    nx_text(cr, date, 13.5, false, subtle, CARD_X + 22, y + 78, 210, 24, NX_LEFT);
-    cairo_rectangle(cr, CARD_X + 228, y + 20, 1, ch - 40);
-    nx_set(cr, wfg(0.12));
-    cairo_fill(cr);
+    nx_text(cr, hm, 52, true, text, CARD_X + 20, y + 8, 0, 62, NX_LEFT);
+    nx_text(cr, date, 15, true, subtle, CARD_X + 22, y + 68, CARD_W - 40, 24, NX_LEFT);
     bool day = tm.tm_hour >= 7 && tm.tm_hour < 19;
-    const char *hello = tm.tm_hour < 5 ? "Bonne nuit" : tm.tm_hour < 12 ? "Bonjour" :
-                        tm.tm_hour < 18 ? "Bon après-midi" : "Bonsoir";
-    draw_sun_or_moon(cr, CARD_X + 270, y + 16, 44, day);
-    nx_text(cr, hello, 12.5, true, text, CARD_X + 230, y + 66, CARD_W - 236, 22, NX_CENTER);
-    nx_text(cr, username, 12.5, false, subtle, CARD_X + 232, y + 88, CARD_W - 240, 20, NX_CENTER);
+    draw_sun_or_moon(cr, CARD_X + CARD_W - 74, y + 16, 50, day);
 
-    /* --- Performances --- */
-    y += ch + 14;
-    ch = 222;
+    /* --- Raccourcis --- */
+    y += ch + GAP;
+    ch = H_SHORT;
     card(cr, y, ch);
-    nx_text(cr, "Performances système", 15, true, text, CARD_X + 20, y + 14, 0, 26, NX_LEFT);
-    nx_icon(cr, "monitor", CARD_X + CARD_W - 44, y + 14, 24, text);
-    double rx = CARD_X + CARD_W / 6.0, ry = y + 92;
-    ring(cr, rx, ry, 34, cpu_pct, nx_rgb("#3d8bff"), "Processeur");
-    ring(cr, rx + CARD_W / 3.0, ry, 34, ram_pct, nx_rgb("#a86bff"), "Mémoire");
-    ring(cr, rx + 2 * CARD_W / 3.0, ry, 34, disk_pct, nx_rgb("#2fd38a"), "Disque");
-    /* courbe de l'activité du processeur */
-    double gx = CARD_X + 18, gy = y + 156, gw = CARD_W - 36, gh = 50;
-    cairo_new_path(cr);
-    for (int i = 0; i < 48; i++) {
-        double px = gx + gw * i / 47.0, py = gy + gh - gh * fmin(history[i], 100) / 100 * 0.9 - 2;
-        if (i == 0) cairo_move_to(cr, px, py); else cairo_line_to(cr, px, py);
+    nx_text(cr, "Raccourcis", 16, true, text, CARD_X + 20, y + 12, 0, 26, NX_LEFT);
+    int nt = nshorts < 4 ? nshorts + 1 : 4;
+    double tw4 = (CARD_W - 32) / 4.0;
+    for (int i = 0; i < nt; i++) {
+        bool add = i >= nshorts;
+        double tx = CARD_X + 16 + i * tw4, ty = y + 48;
+        bool hov = hover_kind == (add ? Z_SHORTADD : Z_SHORT) && (add || hover_index == i);
+        nx_rounded_rect(cr, tx + (tw4 - 54) / 2, ty, 54, 54, 14);
+        if (add) nx_set(cr, wfg(hov ? 0.20 : 0.12));
+        else {
+            cairo_pattern_t *g = cairo_pattern_create_linear(0, ty, 0, ty + 54);
+            nx_color a1 = nx_mix(accent, nx_rgb("#ffffff"), hov ? 0.30 : 0.15);
+            cairo_pattern_add_color_stop_rgb(g, 0, a1.r, a1.g, a1.b);
+            cairo_pattern_add_color_stop_rgb(g, 1, accent.r, accent.g, accent.b);
+            cairo_set_source(cr, g);
+            cairo_fill(cr);
+            cairo_pattern_destroy(g);
+            nx_rounded_rect(cr, tx + (tw4 - 54) / 2, ty, 54, 54, 14);
+            cairo_new_path(cr);
+        }
+        cairo_fill(cr);
+        if (add) {
+            nx_set(cr, text);
+            cairo_set_line_width(cr, 2.6);
+            cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+            double cx = tx + tw4 / 2, cy = ty + 27;
+            cairo_move_to(cr, cx - 11, cy); cairo_line_to(cr, cx + 11, cy);
+            cairo_move_to(cr, cx, cy - 11); cairo_line_to(cr, cx, cy + 11);
+            cairo_stroke(cr);
+        } else {
+            short_glyph(cr, shorts[i].icon, tx + (tw4 - 28) / 2, ty + 13, 28);
+        }
+        nx_text(cr, add ? "Ajouter" : shorts[i].label, 12.5, true, text, tx, ty + 58, tw4, 22, NX_CENTER);
+        add_zone(tx, ty, tw4, 82, add ? Z_SHORTADD : Z_SHORT, add ? -1 : i);
     }
-    cairo_path_t *line = cairo_copy_path(cr);
-    cairo_line_to(cr, gx + gw, gy + gh);
-    cairo_line_to(cr, gx, gy + gh);
-    cairo_close_path(cr);
-    cairo_pattern_t *g = cairo_pattern_create_linear(0, gy, 0, gy + gh);
-    cairo_pattern_add_color_stop_rgba(g, 0, 0.24, 0.55, 1, 0.35);
-    cairo_pattern_add_color_stop_rgba(g, 1, 0.66, 0.42, 1, 0.02);
-    cairo_set_source(cr, g);
-    cairo_fill(cr);
-    cairo_pattern_destroy(g);
-    cairo_new_path(cr);
-    cairo_append_path(cr, line);
-    cairo_path_destroy(line);
-    cairo_set_source_rgba(cr, 0.45, 0.7, 1, 0.9);
-    cairo_set_line_width(cr, 1.8);
-    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
-    cairo_stroke(cr);
 
-    /* --- Mes tâches --- */
-    y += ch + 14;
-    ch = 66 + ntasks * 36 + 44;
+    /* --- Performances (masquées en mode simplifié) --- */
+    if (!nx_conf.simple) {
+        y += ch + GAP;
+        ch = H_PERF;
+        card(cr, y, ch);
+        nx_text(cr, "Performances système", 16, true, text, CARD_X + 20, y + 12, 0, 26, NX_LEFT);
+        double rx = CARD_X + CARD_W / 6.0, ry = y + 90;
+        ring(cr, rx, ry, 36, cpu_pct, nx_rgb("#2bc4f0"), "CPU");
+        ring(cr, rx + CARD_W / 3.0, ry, 36, ram_pct, nx_rgb("#a86bff"), "RAM");
+        ring(cr, rx + 2 * CARD_W / 3.0, ry, 36, disk_pct, nx_rgb("#2fd38a"), "Disque");
+    }
+
+    /* --- Liste de tâches --- */
+    y += ch + GAP;
+    ch = 58 + ntasks * 34 + 40;
     card(cr, y, ch);
-    nx_text(cr, "Mes tâches", 15, true, text, CARD_X + 20, y + 14, 0, 26, NX_LEFT);
-    double ty = y + 52;
-    for (int i = 0; i < ntasks; i++, ty += 36) {
+    nx_text(cr, "Liste de tâches", 16, true, text, CARD_X + 20, y + 12, 0, 26, NX_LEFT);
+    double ty = y + 46;
+    for (int i = 0; i < ntasks; i++, ty += 34) {
         double bx = CARD_X + 20, by = ty + 8;
         nx_rounded_rect(cr, bx, by, 20, 20, 5);
         if (tasks[i].done) {
@@ -386,12 +501,51 @@ static void draw_logical(cairo_t *cr)
         cairo_fill(cr);
     } else if (ntasks < MAX_TASKS) {
         bool hot = hover_kind == Z_ADD;
-        nx_text(cr, "+", 20, false, hot ? text : subtle, CARD_X + 20, ty + 2, 20, 34, NX_CENTER);
-        nx_text(cr, "Ajouter une tâche…", 14, false, hot ? text : subtle, CARD_X + 50, ty + 2, CARD_W - 70, 34, NX_LEFT);
+        nx_rounded_rect(cr, CARD_X + 20, ty + 8, 20, 20, 5);
+        nx_set(cr, nx_alpha(text, hot ? 0.7 : 0.4));
+        cairo_set_line_width(cr, 1.6);
+        cairo_stroke(cr);
+        nx_text(cr, "Ajouter une tâche…", 14, false, hot ? text : subtle, CARD_X + 52, ty + 2, CARD_W - 70, 34, NX_LEFT);
         add_zone(CARD_X + 12, ty, CARD_W - 24, 38, Z_ADD, -1);
     } else {
         nx_text(cr, "Liste pleine : coche ou supprime une tâche", 12.5, false, subtle,
                 CARD_X + 20, ty + 2, CARD_W - 40, 34, NX_LEFT);
+    }
+
+    /* --- Mode simplifié et taille du texte --- */
+    y += ch + GAP;
+    ch = H_SIMPLE;
+    card(cr, y, ch);
+    nx_icon(cr, "access", CARD_X + 18, y + 16, 26, text);
+    nx_text(cr, "Mode simplifié", 15, true, text, CARD_X + 56, y + 12, 0, 34, NX_LEFT);
+    const char *bl = nx_conf.simple ? "Désactiver" : "Activer";
+    double bw = nx_text_width(cr, bl, 13.5, true) + 34, bx = CARD_X + CARD_W - 16 - bw;
+    nx_rounded_rect(cr, bx, y + 13, bw, 32, 16);
+    nx_set(cr, nx_conf.simple ? wfg(hover_kind == Z_SIMPLE ? 0.22 : 0.14)
+                              : (hover_kind == Z_SIMPLE ? nx_mix(accent, nx_rgb("#ffffff"), 0.2) : accent));
+    cairo_fill(cr);
+    nx_text(cr, bl, 13.5, true, nx_conf.simple ? text : nx_rgb("#ffffff"), bx, y + 13, bw, 32, NX_CENTER);
+    add_zone(bx, y + 13, bw, 32, Z_SIMPLE, -1);
+    nx_text(cr, "Aa", 18, true, text, CARD_X + 16, y + 66, 34, 34, NX_CENTER);
+    nx_text(cr, "Taille du texte", 15, true, text, CARD_X + 56, y + 66, 0, 34, NX_LEFT);
+    static const int sizes[] = { 100, 125, 150 };
+    double sgw = 40, sx0 = CARD_X + CARD_W - 16 - 3 * sgw;
+    nx_rounded_rect(cr, sx0 - 3, y + 63, 3 * sgw + 6, 40, 12);
+    nx_set(cr, wfg(0.08));
+    cairo_fill(cr);
+    for (int i = 0; i < 3; i++) {
+        bool on = nx_conf.text_scale == sizes[i];
+        double sx = sx0 + i * sgw;
+        if (on || (hover_kind == Z_TEXT && hover_index == i)) {
+            nx_rounded_rect(cr, sx + 2, y + 66, sgw - 4, 34, 10);
+            nx_set(cr, on ? accent : wfg(0.12));
+            cairo_fill(cr);
+        }
+        double saved = nx_scale;
+        nx_scale = 1;
+        nx_text(cr, "A", 13 + i * 3.5, true, on ? nx_rgb("#ffffff") : text, sx, y + 66, sgw, 34, NX_CENTER);
+        nx_scale = saved;
+        add_zone(sx, y + 63, sgw, 40, Z_TEXT, i);
     }
 
     /* Poignées : déplacer (points en haut) et agrandir (coin en bas à gauche) */
@@ -414,14 +568,21 @@ static void draw_logical(cairo_t *cr)
 
 static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
 {
-    (void)w; (void)width; (void)height;
+    (void)w;
+    cur_h = height;
+    double ts = nx_scale;
+    Sd = fmin(S * ts, fmin(width / (double)W_WIDTH, height / (double)content_h));
+    if (Sd < 0.5) Sd = 0.5;
+    nx_scale = 1;                 /* (taille du texte déjà comprise dans Sd) */
     cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
     cairo_paint(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     cairo_save(cr);
-    cairo_scale(cr, S, S);
+    cairo_translate(cr, width - W_WIDTH * Sd, 0);      /* collés au bord droit */
+    cairo_scale(cr, Sd, Sd);
     draw_logical(cr);
     cairo_restore(cr);
+    nx_scale = ts;
 }
 
 /* ---------- Souris et clavier ---------- */
@@ -452,6 +613,19 @@ static void pointer_logical(struct nx_window *w, enum nx_pointer_event ev, doubl
         } else if (z->kind == Z_ADD) {
             adding = true;
             input[0] = 0;
+        } else if (z->kind == Z_SHORT) {
+            char q[1100], cmd[1200];
+            nx_shell_quote(q, sizeof q, shorts[z->index].path);
+            snprintf(cmd, sizeof cmd, "nexus-files %s", q);
+            nx_spawn(cmd);
+        } else if (z->kind == Z_SHORTADD) {
+            nx_spawn("nexus-notify -i files 'Ajouter un raccourci' "
+                     "'Dans Fichiers, clic droit sur un dossier → « Ajouter aux raccourcis ».'; nexus-files");
+        } else if (z->kind == Z_SIMPLE || z->kind == Z_TEXT) {
+            if (z->kind == Z_SIMPLE) nx_conf.simple = !nx_conf.simple;
+            else nx_conf.text_scale = (int[]){ 100, 125, 150 }[z->index];
+            nx_config_save(&nx_conf);
+            nx_notify_reload();       /* barre, menu… et nous-mêmes (reload) */
         }
         nx_redraw(w);
     }
@@ -464,7 +638,7 @@ static double screen_y(double y) { return y + nx_conf.widget_mt; }
 
 static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, double y, int value)
 {
-    double lx = x / S, ly = y / S;
+    double lx = (x - (cur_w - W_WIDTH * Sd)) / Sd, ly = y / Sd;
     if (drag) {
         if (ev == NX_MOTION) {
             double dx = screen_x(x) - drag_x0, dy = screen_y(y) - drag_y0;
@@ -474,7 +648,7 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
                 nx_conf.widget_mt = mt < 0 ? 0 : mt;
             } else {
                 double nw = drag_w0 - dx;
-                int sc = (int)(100 * nw / W_WIDTH + 0.5);
+                int sc = (int)(100 * nw / (W_WIDTH * nx_scale) + 0.5);
                 nx_conf.widget_scale = sc < 70 ? 70 : sc > 170 ? 170 : sc;
             }
             apply_geometry();
@@ -486,7 +660,7 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
         return;
     }
     struct zone *z = find(lx, ly);
-    bool on_card = lx >= CARD_X && lx <= CARD_X + CARD_W;
+    bool on_card = lx >= CARD_X && lx <= CARD_X + CARD_W && ly >= 0 && ly <= content_h;
     int g = ev == NX_LEAVE ? 0 : (lx < CARD_X + 26 && ly > content_h - 40) || lx < CARD_X + 6 ? 2 : on_card ? 1 : 0;
     if (g != grip_hover) { grip_hover = g; nx_redraw(w); }
     if (ev == NX_PRESS && value == BTN_LEFT && g && (g == 2 || !z) && !adding) {
@@ -531,6 +705,8 @@ static void tick(void) { sample(); nx_redraw(win); }
 static void reload(void)
 {
     if (!nx_conf.widgets) { nx_quit(); return; }
+    shortcuts_load();
+    content_h = compute_content_h();
     apply_geometry();
 }
 
@@ -542,6 +718,7 @@ int widgets_main(int argc, char **argv)
     struct passwd *pw = getpwuid(getuid());
     snprintf(username, sizeof username, "%s", getuid() == 0 ? "Administrateur" : pw ? pw->pw_name : "");
     tasks_load();
+    shortcuts_load();
     sample();
     if (!nx_init()) return 1;
     struct nx_handlers h = { .draw = draw, .pointer = pointer, .key = key };
@@ -549,10 +726,10 @@ int widgets_main(int argc, char **argv)
     S = nx_conf.widget_scale / 100.0;
     content_h = compute_content_h();
     cur_w = (int)(W_WIDTH * S + 0.5);
-    cur_h = (int)(content_h * S + 0.5);
     win = nx_layer_window(h, ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM,
-                          ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
-                          cur_w, cur_h, 0,
+                          ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+                          ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
+                          cur_w, 0, 0,
                           ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND, "nexus-widgets");
     if (!win) return 1;
     apply_geometry();   /* position mémorisée */

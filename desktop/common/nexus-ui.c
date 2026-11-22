@@ -91,6 +91,7 @@ static void config_read(struct nx_config *c, const char *path)
         else if (!strcmp(k, "glass_tint")) c->glass_tint = atoi(v) != 0;
         else if (!strcmp(k, "theme")) c->theme = atoi(v);
         else if (!strcmp(k, "lock_minutes")) c->lock_minutes = atoi(v);
+        else if (!strcmp(k, "simple")) c->simple = atoi(v) != 0;
     }
     fclose(f);
 }
@@ -102,7 +103,7 @@ void nx_config_load(struct nx_config *c)
     c->desktop_icons = true;
     snprintf(c->accent, sizeof c->accent, "#1e6fe0");
     c->text_scale = 100;
-    c->panel_size = 1;
+    c->panel_size = 2;          /* barre haute par défaut (dock) */
     c->panel_height = 0;
     c->menu_scale = 100;
     c->widget_scale = 100;
@@ -115,13 +116,14 @@ void nx_config_load(struct nx_config *c)
     c->glass_tint = false;
     c->theme = 0;
     c->lock_minutes = 10;
+    c->simple = false;
     config_read(c, "/usr/local/etc/nexus/desktop.conf");   /* réglages système */
     char p[512];
     config_path(p, sizeof p);
     config_read(c, p);                                      /* réglages de l'utilisateur */
     if (c->text_scale < 80 || c->text_scale > 200) c->text_scale = 100;
     if (c->panel_size < 0 || c->panel_size > 2) c->panel_size = 1;
-    if (c->panel_height == 0) c->panel_height = (int[]){ 42, 52, 64 }[c->panel_size];
+    if (c->panel_height == 0) c->panel_height = (int[]){ 42, 52, 66 }[c->panel_size];
     if (c->panel_height < 36) c->panel_height = 36;
     if (c->panel_height > 110) c->panel_height = 110;
     if (c->menu_scale < 80 || c->menu_scale > 170) c->menu_scale = 100;
@@ -135,7 +137,8 @@ void nx_config_load(struct nx_config *c)
     if (c->glass_opacity < 0 || c->glass_opacity > 2) c->glass_opacity = 1;
     if (c->theme < 0 || c->theme > 1) c->theme = 0;
     if (c->lock_minutes < 0 || c->lock_minutes > 240) c->lock_minutes = 10;
-    if (c == &nx_conf) nx_scale = c->text_scale / 100.0;
+    /* Mode simplifié : texte et icônes plus grands (au moins 125 %) */
+    if (c == &nx_conf) nx_scale = (c->simple && c->text_scale < 125 ? 125 : c->text_scale) / 100.0;
 }
 
 int nx_config_save(const struct nx_config *c)
@@ -162,7 +165,7 @@ int nx_config_save(const struct nx_config *c)
     fprintf(f, "panel_height=%d\nmenu_scale=%d\n", c->panel_height, c->menu_scale);
     fprintf(f, "widget_scale=%d\nwidget_style=%d\nwidget_mr=%d\nwidget_mt=%d\n",
             c->widget_scale, c->widget_style, c->widget_mr, c->widget_mt);
-    fprintf(f, "theme=%d\nlock_minutes=%d\n", c->theme, c->lock_minutes);
+    fprintf(f, "theme=%d\nlock_minutes=%d\nsimple=%d\n", c->theme, c->lock_minutes, c->simple);
     fclose(f);
     return rename(tmp, p);
 }
@@ -174,7 +177,7 @@ int nx_panel_height(void) { return nx_conf.panel_height; }
 double nx_icon_factor(void)
 {
     static const double f[3] = { 0.82, 1.0, 1.2 };
-    return f[nx_conf.icon_size];
+    return nx_conf.simple ? 1.2 : f[nx_conf.icon_size];
 }
 
 const char *nx_glass_text_hex(void) { return nx_conf.theme == 1 ? "#1b1f2a" : "#eef1f7"; }
@@ -523,6 +526,17 @@ void nx_icon(cairo_t *cr, const char *name, double x, double y, double s, nx_col
         nx_rounded_rect(cr, 0.12, 0.18, 0.76, 0.46, 0.04); nx_set(cr, accent); cairo_fill(cr);
         cairo_rectangle(cr, 0.42, 0.7, 0.16, 0.12); nx_set(cr, nx_rgb("#3a4050")); cairo_fill(cr);
         nx_rounded_rect(cr, 0.28, 0.82, 0.44, 0.07, 0.03); cairo_fill(cr);
+    } else if (!strcmp(name, "access")) {
+        nx_set(cr, fg);
+        cairo_arc(cr, 0.5, 0.16, 0.10, 0, 2 * M_PI);
+        cairo_fill(cr);
+        cairo_set_line_width(cr, 0.10);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+        cairo_move_to(cr, 0.14, 0.36); cairo_line_to(cr, 0.86, 0.36);      /* bras */
+        cairo_move_to(cr, 0.5, 0.36); cairo_line_to(cr, 0.5, 0.62);        /* corps */
+        cairo_move_to(cr, 0.32, 0.92); cairo_line_to(cr, 0.5, 0.62); cairo_line_to(cr, 0.68, 0.92);
+        cairo_stroke(cr);
     } else if (!strcmp(name, "keyboard")) {
         nx_rounded_rect(cr, 0.04, 0.22, 0.92, 0.56, 0.08); nx_set(cr, nx_rgb("#3a4050")); cairo_fill(cr);
         nx_set(cr, nx_rgb("#ffffff"));
@@ -575,7 +589,7 @@ const char *nx_app_icon_for(const char *name)
         { "nexus-editor", "editor" }, { "nano", "editor" }, { "accessories-text-editor", "editor" },
         { "nexus-about", "about" }, { "help-about", "about" }, { "info", "about" },
         { "nexus-store", "store" }, { "system-software-install", "store" },
-        { "nexus-viewer", "viewer" }, { "image", "viewer" },
+        { "nexus-viewer", "viewer" }, { "image", "viewer" }, { "nexus-photos", "viewer" },
         { "nexus-calculator", "calculator" }, { "accessories-calculator", "calculator" },
         { "nexus-screenshot", "screenshot" }, { "applets-screenshooter", "screenshot" },
     };

@@ -1,5 +1,5 @@
 NAME=nexus-desktop
-VERSION=0.12.0
+VERSION=0.13.0
 DEPENDS="labwc foot alsa wifi"
 DESC="Le bureau de Nexus OS : connexion graphique, barre des tâches, menu Démarrer, widgets, fichiers"
 

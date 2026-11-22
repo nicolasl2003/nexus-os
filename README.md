@@ -689,3 +689,32 @@ Documents, Images et Téléchargements (`/etc/skel`).
 Testé dans une VM vierge : copier-coller éditeur → terminal et calculatrice →
 éditeur, Alt+Tab, changement de bureau, verrouillage (mauvais puis bon mot de
 passe, et automatique après 5 min), thème clair.
+
+## Nexus 0.13 : nouveau design
+
+- **Dock** (`desktop/shell/panel.c`) : barre en verre aux coins arrondis, et au
+  centre un dock flottant : N (menu), recherche, Fichiers, Navigateur,
+  Paramètres, Magasin, puis les fenêtres ouvertes. Un halo coloré sous
+  l'application active, un point sous les autres. À droite : ^ (Paramètres),
+  réseau, son, batterie (sur portable), heure et date. Barre plus haute par
+  défaut (66 px, tirer son bord supérieur pour changer).
+- **Menu Démarrer** (`menu.c`) : centré au-dessus du dock, une flèche pointe
+  vers N. À gauche : photo et nom du compte, Marche/Arrêt, Paramètres,
+  Verrouiller, interrupteur « Mode simplifié ». À droite : recherche au
+  contour lumineux, « Apps épinglées » (Navigateur, Fichiers, Photos,
+  Magasin, Paramètres, Éditeur, Calculatrice, Terminal ; flèches + Entrée),
+  « Recommandé » (fichiers récents, Téléchargements, Documents, Images, avec
+  date de modification).
+- **Widgets** (`widgets.c`) : Horloge ; **Raccourcis** vers des dossiers
+  (Bureau, Images, Téléchargements, + : dans Fichiers, clic droit sur un
+  dossier → « Ajouter aux raccourcis », 4 au plus, `~/.config/nexus/raccourcis`) ;
+  Performances (CPU, RAM, Disque) ; Liste de tâches ; **Mode simplifié** et
+  **Taille du texte** (A A A). Les widgets se réduisent si l'écran est petit.
+- **Mode simplifié** (`simple=1` dans desktop.conf) : texte d'au moins 125 %,
+  grandes icônes, menu sans « Recommandé », widgets sans « Performances ».
+  Le menu et les widgets s'agrandissent d'un bloc (rien n'est coupé).
+- Nouvelle application **Photos** (ouvre le dossier Images).
+
+Mise à jour d'une installation existante : la hauteur de barre déjà choisie
+est conservée ; pour le grand dock, tirer le bord supérieur de la barre vers
+le haut (ou Paramètres → Barre et menu).

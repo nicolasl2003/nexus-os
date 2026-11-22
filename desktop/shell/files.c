@@ -529,7 +529,7 @@ static void open_entry(int i)
 
 enum action {
     A_NONE, A_OPEN, A_CUT, A_COPY, A_PASTE, A_RENAME, A_TRASH, A_RESTORE, A_DELETE,
-    A_NEWDIR, A_HIDDEN, A_REFRESH, A_EMPTY,
+    A_NEWDIR, A_HIDDEN, A_REFRESH, A_EMPTY, A_SHORTCUT,
 };
 struct menu_item { const char *label; enum action act; };
 static struct menu_item menu[10];
@@ -559,6 +559,8 @@ static void open_menu(double x, double y, bool on_item)
             add_menu("Couper", A_CUT);
             add_menu("Copier", A_COPY);
             if (selected_count() == 1) add_menu("Renommer", A_RENAME);
+            if (selected_count() == 1 && first_selected() >= 0 && ents[first_selected()].dir)
+                add_menu("Ajouter aux raccourcis", A_SHORTCUT);
             add_menu("Mettre à la corbeille", A_TRASH);
         }
     } else if (in_trash()) {
@@ -635,6 +637,38 @@ static void run_action(enum action a)
     case A_HIDDEN: show_hidden = !show_hidden; refresh(); break;
     case A_REFRESH: refresh(); break;
     case A_EMPTY: start_dialog(DLG_EMPTY); break;
+    case A_SHORTCUT: {
+        /* widget « Raccourcis » du bureau : 4 dossiers au plus */
+        int i = first_selected();
+        if (i < 0) break;
+        char p[PATH_MAX], f[PATH_MAX], line[PATH_MAX + 300];
+        sel_path(i, p, sizeof p);
+        snprintf(f, sizeof f, "%s/.config/nexus/raccourcis", home);
+        int n = 0;
+        FILE *fp = fopen(f, "r");
+        char existing[4][PATH_MAX + 300];
+        if (fp) {
+            while (n < 4 && fgets(existing[n], sizeof existing[n], fp)) n++;
+            fclose(fp);
+        } else {   /* premier ajout : garder les raccourcis par défaut */
+            snprintf(existing[0], sizeof existing[0], "Bureau|%s\n", home);
+            snprintf(existing[1], sizeof existing[1], "Images|%s/Images\n", home);
+            snprintf(existing[2], sizeof existing[2], "Télécharg.|%s/Téléchargements\n", home);
+            n = 3;
+        }
+        if (n >= 4) { set_status("Il y a déjà 4 raccourcis : enlève-en un dans ~/.config/nexus/raccourcis"); break; }
+        char label[64];
+        snprintf(label, sizeof label, "%.12s", ents[i].name);
+        snprintf(line, sizeof line, "%s|%s\n", label, p);
+        fp = fopen(f, "w");
+        if (!fp) { set_status("Impossible d'enregistrer le raccourci"); break; }
+        for (int k = 0; k < n; k++) fputs(existing[k], fp);
+        fputs(line, fp);
+        fclose(fp);
+        nx_notify_reload();
+        set_status("« %s » ajouté aux raccourcis du bureau", ents[i].name);
+        break;
+    }
     default: break;
     }
     nx_redraw(win);

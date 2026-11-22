@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Photos
+Comment=Tes images (dossier Images)
+Exec=nexus-files "$HOME/Images"
+Icon=nexus-photos
