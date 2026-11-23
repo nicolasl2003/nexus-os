@@ -154,9 +154,9 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     nx_color accent = nx_accent_color();
 
     /* Fond d'écran (calculé une fois), assombri pour la lisibilité */
-    if (!bg || bg_w != width || bg_h != height) {
+    if (nx_image_stale(bg) || bg_w != width || bg_h != height) {
         if (bg) cairo_surface_destroy(bg);
-        bg = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
+        bg = nx_image_surface(CAIRO_FORMAT_RGB24, width, height);
         cairo_t *c = cairo_create(bg);
         nx_draw_wallpaper(c, nx_conf.wallpaper, width, height);
         cairo_pattern_t *g = cairo_pattern_create_linear(0, 0, 0, height);
@@ -355,6 +355,8 @@ int greeter_main(int argc, char **argv)
     if (getuid() != 0) { fprintf(stderr, "nexus-greeter doit être lancé par nexus-login (root).\n"); return 1; }
     load_accounts();
     if (!nx_init()) return 1;
+    /* Grand écran : agrandir l'affichage (taille automatique) */
+    if (system("/usr/local/bin/nexus-display auto >/dev/null 2>&1") != 0) { /* écran laissé tel quel */ }
     struct nx_handlers h = { .draw = draw, .pointer = pointer, .key = key };
     win = nx_layer_window(h, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
                           ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |

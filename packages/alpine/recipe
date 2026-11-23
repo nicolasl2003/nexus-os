@@ -1,5 +1,6 @@
 NAME=alpine
 VERSION=1.0
+REL=2
 DEPENDS="curl openssl ca-certificates"
 DESC="npk alpine : installer les ~30 000 logiciels d'Alpine Linux (signatures vérifiées)"
 

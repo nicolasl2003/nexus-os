@@ -1,4 +1,6 @@
 # Programmes lancés à l'ouverture du bureau Nexus
+# Taille de l'affichage (Paramètres → Affichage), avant le reste du bureau
+nexus-display
 nexus-wallpaper &
 nexus-panel &
 nexus-widgets &

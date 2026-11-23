@@ -829,3 +829,30 @@ pilote d'une clé Wi-Fi ou d'une carte son USB branchée **après** le démarrag
 n'était pas chargé. Corrigé (noyau recompilé, `linux-wifi` 6.12.10-r5).
 Testé : branchement d'une clé USB dans la VM (le script est appelé), et
 pilote `ath9k_htc` chargé pour l'identifiant d'une clé Wi-Fi Atheros.
+
+## Nexus 0.16 : taille de l'affichage
+
+- **Paramètres → Affichage → Taille de l'affichage** : Auto, 100 à 200 %.
+  Tout l'écran grandit d'un coup (barre de titre, Firefox, terminal,
+  applications Nexus). « Auto » vise environ 1333 x 800 points logiques :
+  ×1,5 sur un écran de 2000 x 1250 ou 1920 x 1200, ×1 sur 1280 x 800.
+  Appliqué par `nexus-display` (protocole wlr-output-management de labwc) à
+  l'ouverture de la session, sur l'écran de connexion et dans l'assistant.
+- **Texte net** à toutes les tailles : `nexus-ui` dessine directement à
+  l'échelle de l'écran (protocoles fractional-scale et viewporter) au lieu
+  de laisser labwc agrandir une image floue. Les images en cache (fonds
+  d'écran) passent par `nx_image_surface()`.
+- **Firefox** : il utilise maintenant la barre de titre de Nexus (boutons
+  réduire / agrandir / fermer visibles) grâce à
+  `/etc/firefox/policies/policies.json` (`browser.tabs.inTitlebar = 0`).
+- **Correctif** : depuis la 0.14, root crée ses fichiers en privé
+  (`umask 027`), et les logiciels installés par root ou par le Magasin
+  devenaient illisibles pour les autres comptes (« Permission denied » en
+  lançant Firefox). `npk` et `npk alpine` installent toujours en `umask 022`,
+  et le démarrage répare les logiciels déjà installés (`/usr/local/bin`,
+  `lib`, `share`, `libexec`, `alpine`…).
+
+Testé dans une VM en 2000 x 1250 : assistant, écran de connexion et bureau en
+×1,5 (texte net), changement de taille en direct dans Paramètres, Firefox
+avec la barre de titre Nexus, `htop` installé par root lancé par un compte
+ordinaire.

@@ -82,6 +82,12 @@ if [ "$PERSIST" = 1 ] && [ -f "$PRE/LIST" ] && [ ! -x /usr/local/sbin/nexus-logi
 fi
 rm -rf "$PRE"
 
+# Logiciels installés entre 0.14 et 0.16 avec le masque privé de root
+# (umask 027) : les rendre de nouveau lisibles par tous les comptes
+# (/usr/local/etc et /usr/local/var, qui peuvent être privés, ne sont pas touchés)
+find /usr/local/bin /usr/local/sbin /usr/local/lib /usr/local/libexec /usr/local/share \
+     /usr/local/alpine \( -type d ! -perm -005 -o -type f ! -perm -004 \) \
+     -exec chmod go+rX {} + 2>/dev/null
 # Pilotes en modules et firmwares (paquet linux-wifi, dans /usr/local)
 mkdir -p /lib
 ln -sfn /usr/local/lib/modules /lib/modules   # (lien valide dès que linux-wifi est installé)

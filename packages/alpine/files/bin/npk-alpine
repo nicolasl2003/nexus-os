@@ -27,6 +27,7 @@ ARCH="x86_64"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 
+umask 022   # logiciels lisibles par tous les comptes (root a umask 027)
 AROOT=/usr/local/alpine
 ADB=/usr/local/var/lib/npk/alpine
 KEYS=/usr/local/share/npk/alpine-keys

@@ -674,9 +674,9 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     /* Fond : le fond d'écran choisi, assombri (calculé une fois par choix) */
     static cairo_surface_t *bg;
     static int bg_w, bg_h, bg_wall = -1;
-    if (!bg || bg_w != width || bg_h != height || bg_wall != wall_cur) {
+    if (nx_image_stale(bg) || bg_w != width || bg_h != height || bg_wall != wall_cur) {
         if (bg) cairo_surface_destroy(bg);
-        bg = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
+        bg = nx_image_surface(CAIRO_FORMAT_RGB24, width, height);
         cairo_t *c = cairo_create(bg);
         char spec[64];
         snprintf(spec, sizeof spec, "preset:%s", nx_presets[wall_cur].id);
@@ -856,6 +856,8 @@ int assistant_main(int argc, char **argv)
         fprintf(stderr, "nexus-assistant doit être lancé par nexus-login (root), au premier démarrage.\n");
         return 1;
     }
+    /* Grand écran : agrandir l'affichage (taille automatique) */
+    if (system("/usr/local/bin/nexus-display auto >/dev/null 2>&1") != 0) { /* écran laissé tel quel */ }
     load_keyboard();
     /* Valeurs de départ : nom actuel, couleur et fond par défaut */
     char h[64] = "";

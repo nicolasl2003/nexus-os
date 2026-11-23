@@ -113,9 +113,9 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     nx_color subtle = nx_rgb("#b9c1d3");
     static cairo_surface_t *bg;
     static int bw, bh;
-    if (!bg || bw != width || bh != height) {
+    if (nx_image_stale(bg) || bw != width || bh != height) {
         if (bg) cairo_surface_destroy(bg);
-        bg = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
+        bg = nx_image_surface(CAIRO_FORMAT_RGB24, width, height);
         cairo_t *c = cairo_create(bg);
         nx_draw_wallpaper(c, nx_conf.wallpaper, width, height);
         cairo_pattern_t *g = cairo_pattern_create_linear(0, 0, 0, height);

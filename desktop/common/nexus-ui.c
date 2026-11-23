@@ -25,6 +25,23 @@
 struct nx_state nx;
 struct nx_config nx_conf;
 double nx_scale = 1.0;
+double nx_draw_scale = 1.0;
+
+cairo_surface_t *nx_image_surface(cairo_format_t format, int width, int height)
+{
+    double s = nx_draw_scale;
+    cairo_surface_t *cs = cairo_image_surface_create(format, (int)ceil(width * s), (int)ceil(height * s));
+    cairo_surface_set_device_scale(cs, s, s);
+    return cs;
+}
+
+bool nx_image_stale(cairo_surface_t *s)
+{
+    if (!s) return true;
+    double sx, sy;
+    cairo_surface_get_device_scale(s, &sx, &sy);
+    return fabs(sx - nx_draw_scale) > 0.001;
+}
 static volatile sig_atomic_t reload_flag, quit_flag;
 
 /* ===================== Couleurs ===================== */
@@ -92,6 +109,7 @@ static void config_read(struct nx_config *c, const char *path)
         else if (!strcmp(k, "theme")) c->theme = atoi(v);
         else if (!strcmp(k, "lock_minutes")) c->lock_minutes = atoi(v);
         else if (!strcmp(k, "simple")) c->simple = atoi(v) != 0;
+        else if (!strcmp(k, "display_scale")) c->display_scale = atoi(v);
     }
     fclose(f);
 }
@@ -117,6 +135,7 @@ void nx_config_load(struct nx_config *c)
     c->theme = 0;
     c->lock_minutes = 10;
     c->simple = false;
+    c->display_scale = 0;
     config_read(c, "/usr/local/etc/nexus/desktop.conf");   /* réglages système */
     char p[512];
     config_path(p, sizeof p);
@@ -137,6 +156,7 @@ void nx_config_load(struct nx_config *c)
     if (c->glass_opacity < 0 || c->glass_opacity > 2) c->glass_opacity = 1;
     if (c->theme < 0 || c->theme > 1) c->theme = 0;
     if (c->lock_minutes < 0 || c->lock_minutes > 240) c->lock_minutes = 10;
+    if (c->display_scale && (c->display_scale < 100 || c->display_scale > 200)) c->display_scale = 0;
     /* Mode simplifié : texte et icônes plus grands (au moins 125 %) */
     if (c == &nx_conf) nx_scale = (c->simple && c->text_scale < 125 ? 125 : c->text_scale) / 100.0;
 }
@@ -166,6 +186,7 @@ int nx_config_save(const struct nx_config *c)
     fprintf(f, "widget_scale=%d\nwidget_style=%d\nwidget_mr=%d\nwidget_mt=%d\n",
             c->widget_scale, c->widget_style, c->widget_mr, c->widget_mt);
     fprintf(f, "theme=%d\nlock_minutes=%d\nsimple=%d\n", c->theme, c->lock_minutes, c->simple);
+    fprintf(f, "display_scale=%d\n", c->display_scale);
     fclose(f);
     return rename(tmp, p);
 }
@@ -1095,7 +1116,8 @@ void nx_draw_wallpaper_cached(cairo_t *cr, const char *spec, double w, double h)
 {
     int iw = (int)ceil(w), ih = (int)ceil(h), slot = -1, lru = 0;
     for (int i = 0; i < WCACHE_N; i++) {
-        if (wcache[i].s && wcache[i].w == iw && wcache[i].h == ih && !strcmp(wcache[i].spec, spec)) {
+        if (wcache[i].s && wcache[i].w == iw && wcache[i].h == ih && !strcmp(wcache[i].spec, spec)
+            && !nx_image_stale(wcache[i].s)) {
             slot = i;
             break;
         }
@@ -1104,7 +1126,7 @@ void nx_draw_wallpaper_cached(cairo_t *cr, const char *spec, double w, double h)
     if (slot < 0) {
         slot = lru;
         if (wcache[slot].s) cairo_surface_destroy(wcache[slot].s);
-        wcache[slot].s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, iw, ih);
+        wcache[slot].s = nx_image_surface(CAIRO_FORMAT_ARGB32, iw, ih);
         cairo_t *c = cairo_create(wcache[slot].s);
         nx_draw_wallpaper(c, spec, iw, ih);
         cairo_destroy(c);
@@ -1161,9 +1183,10 @@ static struct nx_buffer *get_buffer(struct nx_window *w)
     for (int i = 0; i < 2; i++) {
         struct nx_buffer *b = &w->bufs[i];
         if (b->busy) continue;
-        if (b->wl && b->width == w->width && b->height == w->height) return b;
+        int bw = (int)ceil(w->width * w->scale), bh = (int)ceil(w->height * w->scale);
+        if (b->wl && b->width == bw && b->height == bh) return b;
         buffer_destroy(b);
-        if (buffer_create(b, w->width, w->height)) return b;
+        if (buffer_create(b, bw, bh)) return b;
         return NULL;
     }
     return NULL;   /* les deux tampons sont encore utilisés par le compositeur */
@@ -1174,6 +1197,9 @@ static void draw_now(struct nx_window *w)
     if (!w->configured || w->width <= 0 || w->height <= 0 || !w->h.draw) return;
     struct nx_buffer *b = get_buffer(w);
     if (!b) return;   /* on réessaiera au prochain tour */
+    /* On dessine en unités logiques ; le tampon est (largeur x échelle) pixels */
+    cairo_surface_set_device_scale(b->cs, w->scale, w->scale);
+    nx_draw_scale = w->scale;
     cairo_t *cr = cairo_create(b->cs);
     cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
     cairo_set_source_rgba(cr, 0, 0, 0, 0);
@@ -1181,8 +1207,10 @@ static void draw_now(struct nx_window *w)
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     w->h.draw(w, cr, w->width, w->height);
     cairo_destroy(cr);
+    nx_draw_scale = 1;
     cairo_surface_flush(b->cs);
     wl_surface_attach(w->surface, b->wl, 0, 0);
+    if (w->viewport) wp_viewport_set_destination(w->viewport, w->width, w->height);
     wl_surface_damage_buffer(w->surface, 0, 0, INT32_MAX, INT32_MAX);
     wl_surface_commit(w->surface);
     b->busy = true;
@@ -1441,6 +1469,10 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
         nx.lock_manager = wl_registry_bind(r, name, &ext_session_lock_manager_v1_interface, 1);
     else if (!strcmp(iface, ext_idle_notifier_v1_interface.name))
         nx.idle_notifier = wl_registry_bind(r, name, &ext_idle_notifier_v1_interface, 1);
+    else if (!strcmp(iface, wp_viewporter_interface.name))
+        nx.viewporter = wl_registry_bind(r, name, &wp_viewporter_interface, 1);
+    else if (!strcmp(iface, wp_fractional_scale_manager_v1_interface.name))
+        nx.frac_manager = wl_registry_bind(r, name, &wp_fractional_scale_manager_v1_interface, 1);
     else if (!strcmp(iface, wl_output_interface.name) && nx.noutputs < 8)
         nx.outputs[nx.noutputs++] = wl_registry_bind(r, name, &wl_output_interface, 1);
 #undef NX_MIN
@@ -1492,8 +1524,25 @@ bool nx_init(void)
     return true;
 }
 
+/* Le compositeur indique l'échelle de l'écran (en 120es : 180 = x1,5) */
+static void frac_preferred(void *d, struct wp_fractional_scale_v1 *f, uint32_t s120)
+{
+    (void)f;
+    struct nx_window *w = d;
+    double s = s120 / 120.0;
+    if (s < 0.5 || s > 4) s = 1;
+    if (fabs(s - w->scale) > 0.001) { w->scale = s; w->dirty = true; }
+}
+static const struct wp_fractional_scale_v1_listener frac_listener = { .preferred_scale = frac_preferred };
+
 static void add_window(struct nx_window *w)
 {
+    w->scale = 1;
+    if (nx.viewporter && nx.frac_manager) {
+        w->viewport = wp_viewporter_get_viewport(nx.viewporter, w->surface);
+        w->frac = wp_fractional_scale_manager_v1_get_fractional_scale(nx.frac_manager, w->surface);
+        wp_fractional_scale_v1_add_listener(w->frac, &frac_listener, w);
+    }
     if (nx.nwindows < 8) nx.windows[nx.nwindows++] = w;
 }
 

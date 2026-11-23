@@ -13,6 +13,10 @@
 # Les paquets s'installent dans $NPK_ROOT (/usr/local), qui est sur le
 # disque persistant quand il existe.
 
+# Logiciels du système : lisibles par tous les comptes, même si root a un
+# masque privé (umask 027, Nexus 0.14) ou si on passe par le Magasin
+umask 022
+
 NPK_ROOT="${NPK_ROOT:-/usr/local}"
 DB="$NPK_ROOT/var/lib/npk"
 CACHE="$NPK_ROOT/var/cache/npk"

@@ -36,9 +36,9 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
 {
     (void)w;
     /* Le paysage n'est recalculé que si la taille ou le fond changent */
-    if (!cache || cache_w != width || cache_h != height || strcmp(cache_spec, nx_conf.wallpaper)) {
+    if (nx_image_stale(cache) || cache_w != width || cache_h != height || strcmp(cache_spec, nx_conf.wallpaper)) {
         if (cache) cairo_surface_destroy(cache);
-        cache = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
+        cache = nx_image_surface(CAIRO_FORMAT_RGB24, width, height);
         cairo_t *c = cairo_create(cache);
         nx_draw_wallpaper(c, nx_conf.wallpaper, width, height);
         cairo_destroy(c);

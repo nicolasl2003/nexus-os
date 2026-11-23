@@ -26,6 +26,8 @@
 #include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "ext-session-lock-v1-client-protocol.h"
 #include "ext-idle-notify-v1-client-protocol.h"
+#include "viewporter-client-protocol.h"
+#include "fractional-scale-v1-client-protocol.h"
 
 /* ---------- Couleurs ---------- */
 
@@ -64,6 +66,7 @@ struct nx_config {
     bool glass_tint;     /* barre et menus teintés de la couleur d'accent */
     int theme;           /* barre, menu, panneaux : 0 sombre, 1 clair */
     int lock_minutes;    /* verrouillage après N minutes d'inactivité (0 : jamais) */
+    int display_scale;   /* taille de l'affichage en % (100 à 200), 0 : automatique */
     bool simple;         /* mode simplifié : texte et icônes plus grands, menus épurés */
 };
 
@@ -74,6 +77,12 @@ extern const int nx_accent_count;
 void nx_config_load(struct nx_config *c);
 int nx_config_save(const struct nx_config *c);
 extern struct nx_config nx_conf;       /* configuration courante */
+/* Échelle de l'écran de la fenêtre en cours de dessin (1 hors dessin). Les images
+ * gardées en cache doivent être créées avec nx_image_surface() pour rester nettes,
+ * et recréées quand nx_image_stale() le dit (échelle changée). */
+extern double nx_draw_scale;
+cairo_surface_t *nx_image_surface(cairo_format_t format, int width, int height);
+bool nx_image_stale(cairo_surface_t *s);
 extern double nx_scale;                 /* nx_conf.text_scale / 100 */
 nx_color nx_accent_color(void);
 int nx_panel_height(void);              /* hauteur de la barre des tâches (px) */
@@ -161,6 +170,9 @@ struct nx_window {
     struct nx_buffer bufs[2];
     struct nx_handlers h;
     double px, py;          /* dernière position de la souris */
+    double scale;           /* échelle de l'écran (1, 1.25, 1.5...) : tampon plus grand, même taille logique */
+    struct wp_viewport *viewport;
+    struct wp_fractional_scale_v1 *frac;
 };
 
 struct nx_state {
@@ -179,6 +191,8 @@ struct nx_state {
     struct wl_data_device *data_device;
     struct ext_session_lock_manager_v1 *lock_manager;
     struct ext_idle_notifier_v1 *idle_notifier;
+    struct wp_viewporter *viewporter;
+    struct wp_fractional_scale_manager_v1 *frac_manager;
     struct wl_output *outputs[8];
     int noutputs;
     uint32_t serial;        /* dernier événement clavier/souris (presse-papiers) */

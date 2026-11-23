@@ -47,7 +47,7 @@ static int section = SEC_WALL;
 
 /* ---------- Zones cliquables (recalculées à chaque dessin) ---------- */
 
-enum kind { K_NAV, K_WALL, K_ACCENT, K_SCALE, K_TOGGLE, K_PANEL, K_ISIZE, K_ISTYLE, K_ISHAPE,
+enum kind { K_NAV, K_WALL, K_ACCENT, K_SCALE, K_DSCALE, K_TOGGLE, K_PANEL, K_ISIZE, K_ISTYLE, K_ISHAPE,
             K_OPACITY, K_TINT, K_MENU, K_WSIZE, K_WSTYLE, K_WRESET,
             K_ACC_ADD, K_ACC_PW, K_ACC_DEL, K_DLG_FIELD, K_DLG_OK, K_DLG_CANCEL, K_DLG_WIPE, K_KB, K_THEME, K_LOCKDELAY, K_LOCKNOW,
             K_FW, K_SEC_OK, K_SEC_CANCEL, K_SEC_BG, K_SEC_FIELD, K_BLOCAGE, K_CRYPT, K_JOURNAL };
@@ -56,9 +56,10 @@ static struct rect rects[96];
 static int nrects;
 static int hover_kind = -1, hover_index = -1;
 
+static double rect_dy;   /* décalage vertical en cours (cairo_translate d'une section) */
 static void add_rect(double x, double y, double w, double h, enum kind k, int i)
 {
-    if (nrects < 96) rects[nrects++] = (struct rect){ x, y, w, h, k, i };
+    if (nrects < 96) rects[nrects++] = (struct rect){ x, y + rect_dy, w, h, k, i };
 }
 static bool is_hover(enum kind k, int i) { return (int)k == hover_kind && i == hover_index; }
 
@@ -635,7 +636,29 @@ static void draw_display(cairo_t *cr, double x0, double cw)
 {
     (void)cw;
     nx_color accent = nx_accent_color();
-    section_title(cr, x0, "Affichage", "Taille du texte et éléments du bureau.");
+    section_title(cr, x0, "Affichage", "Taille de l'affichage, du texte et éléments du bureau.");
+
+    /* Taille de l'affichage : agrandit tout l'écran (toutes les fenêtres) */
+    nx_text(cr, "Taille de l'affichage", 14, true, nx_rgb(NX_TEXT), x0, 104, 0, 24, NX_LEFT);
+    static const struct { int pct; const char *name; } ds[] = {
+        { 0, "Auto" }, { 100, "100 %" }, { 125, "125 %" },
+        { 150, "150 %" }, { 175, "175 %" }, { 200, "200 %" },
+    };
+    for (int i = 0; i < 6; i++) {
+        double w = (cw - 5 * 8) / 6, x = x0 + i * (w + 8), y = 134, h = 40;
+        bool sel = nx_conf.display_scale == ds[i].pct;
+        nx_rounded_rect(cr, x, y, w, h, 10);
+        nx_set(cr, sel ? accent : is_hover(K_DSCALE, i) ? nx_rgb("#eef1f6") : nx_rgb("#f6f7fa"));
+        cairo_fill(cr);
+        nx_text(cr, ds[i].name, 13, true, sel ? nx_rgb("#ffffff") : nx_rgb(NX_TEXT), x, y, w, h, NX_CENTER);
+        add_rect(x, y, w, h, K_DSCALE, i);
+    }
+    nx_text(cr, "Agrandit tout l'écran. « Auto » choisit selon la taille de l'écran.",
+            12.5, false, nx_rgb(NX_SUBTLE), x0, 180, 0, 22, NX_LEFT);
+    cairo_save(cr);
+    cairo_translate(cr, 0, 112);   /* la suite de la section descend d'autant */
+    rect_dy = 112;
+
     nx_text(cr, "Taille du texte", 14, true, nx_rgb(NX_TEXT), x0, 104, 0, 24, NX_LEFT);
     static const struct { int scale; const char *name; double size; } opts[] = {
         { 100, "Normal", 22 }, { 125, "Grand", 26 }, { 150, "Très grand", 28 },
@@ -683,6 +706,8 @@ static void draw_display(cairo_t *cr, double x0, double cw)
         cairo_fill(cr);
         add_rect(x0, y, w, 56, K_TOGGLE, i);
     }
+    rect_dy = 0;
+    cairo_restore(cr);
 }
 
 /* ---------- Comptes utilisateurs ---------- */
@@ -1641,6 +1666,11 @@ static void click(struct rect *r)
     case K_ISHAPE: nx_conf.icon_shape = r->index; nx_conf.icon_style = 0; apply(); break;
     case K_OPACITY: nx_conf.glass_opacity = r->index; apply(); break;
     case K_TINT: nx_conf.glass_tint = !nx_conf.glass_tint; apply(); break;
+    case K_DSCALE:
+        nx_conf.display_scale = (int[]){ 0, 100, 125, 150, 175, 200 }[r->index];
+        apply();
+        nx_spawn("nexus-display");   /* tout l'écran change de taille tout de suite */
+        break;
     case K_SCALE:
         nx_conf.text_scale = (int[]){ 100, 125, 150 }[r->index];
         nx_scale = nx_conf.text_scale / 100.0;
