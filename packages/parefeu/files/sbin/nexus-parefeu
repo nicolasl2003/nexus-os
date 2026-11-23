@@ -87,6 +87,9 @@ case "${1:-status}" in
         esac
         save; apply
         logger -t parefeu "réglage : $2" 2>/dev/null
+        # Journal de sécurité (Paramètres → Protection)
+        mkdir -p /usr/local/var/log
+        ( umask 077; echo "$(date '+%Y-%m-%d %H:%M:%S') PARE-FEU : réglage $2 (par ${NEXUS_PAR:-root})" >> /usr/local/var/log/securite.log )
         "$0" status ;;
     *) die "usage : nexus-parefeu start|stop|status|show|set …" ;;
 esac

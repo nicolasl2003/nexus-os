@@ -431,11 +431,44 @@ b_nftables() {
     rm -f "$P"/lib/*.la
 }
 
+b_cryptsetup() {
+    # Chiffrement du disque (LUKS2) : cryptsetup entièrement statique, avec
+    # les bibliothèques statiques d'Alpine (pas celles de notre sysroot)
+    unpack cryptsetup https://www.kernel.org/pub/linux/utils/cryptsetup/v2.7/cryptsetup-2.7.5.tar.xz
+    PKG_CONFIG_LIBDIR=/usr/lib/pkgconfig CFLAGS="-O2" CPPFLAGS="" LDFLAGS="" \
+    ./configure --prefix=/usr/local --disable-shared --enable-static --enable-static-cryptsetup \
+        --with-crypto_backend=openssl --enable-libargon2 --disable-asciidoc --disable-nls \
+        --disable-udev --disable-selinux --disable-ssh-token --disable-external-tokens \
+        --disable-veritysetup --disable-integritysetup --disable-blkid \
+        >"$BLD/cryptsetup.log" 2>&1 || { tail -30 "$BLD/cryptsetup.log"; exit 1; }
+    make -j"$JOBS" cryptsetup.static >>"$BLD/cryptsetup.log" 2>&1 ||
+        { grep -E 'error|undefined' "$BLD/cryptsetup.log" | head -30; exit 1; }
+    install -D -m 755 cryptsetup.static "$P/sbin/cryptsetup"
+    strip "$P/sbin/cryptsetup"
+}
+b_e2fsprogs() {
+    # resize2fs (réduire le système de fichiers avant de le chiffrer) et e2fsck
+    unpack e2fsprogs https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v1.47.1/e2fsprogs-1.47.1.tar.xz
+    # musl : lseek64 n'est qu'une macro (avec _LARGEFILE64_SOURCE), introuvable
+    # par configure ; on le lui dit pour éviter le repli « _llseek » (32 bits)
+    ac_cv_func_lseek64=yes CFLAGS="-O2 -D_LARGEFILE64_SOURCE" CPPFLAGS="" LDFLAGS="-static" \
+        ./configure --disable-nls --disable-fuse2fs \
+        --disable-elf-shlibs --disable-uuidd --disable-defrag --disable-debugfs --disable-imager \
+        >"$BLD/e2fsprogs.log" 2>&1 || { tail -30 "$BLD/e2fsprogs.log"; exit 1; }
+    make -j"$JOBS" LDFLAGS="-static" libs >>"$BLD/e2fsprogs.log" 2>&1 &&
+    make -j"$JOBS" LDFLAGS="-static" -C resize resize2fs >>"$BLD/e2fsprogs.log" 2>&1 &&
+    make -j"$JOBS" LDFLAGS="-static" -C e2fsck e2fsck >>"$BLD/e2fsprogs.log" 2>&1 ||
+        { grep -E 'error|undefined' "$BLD/e2fsprogs.log" | head -30; exit 1; }
+    install -D -m 755 resize/resize2fs "$P/sbin/resize2fs"
+    install -D -m 755 e2fsck/e2fsck "$P/sbin/e2fsck"
+    strip "$P/sbin/resize2fs" "$P/sbin/e2fsck"
+}
+
 STEPS="zlib libpng expat freetype fontconfig pixman libffi pcre2 glib cairo fribidi harfbuzz pango libxml2
        wayland wayland_protocols libxkbcommon xkeyboard_config libdrm mtdev libevdev libudev_zero
        libinput seatd libdisplay_info wlroots labwc tllist fcft foot xcompose fonts
        alsa_lib alsa_utils libnl wpa_supplicant hostapd regdb
-       openssl curl libjpeg netsurf alpine_keys libmnl libnftnl nftables"
+       openssl curl libjpeg netsurf alpine_keys libmnl libnftnl nftables cryptsetup e2fsprogs"
 
 # Reconstruction forcée d'un composant : build-gui.sh <composant>
 if [ $# -gt 0 ]; then

@@ -91,8 +91,11 @@ static void check_done(void)
         msg_error = false;
     } else {
         msg_error = true;
-        snprintf(message, sizeof message, r > 0 && WIFEXITED(st) && WEXITSTATUS(st) == 127 ?
-                 "Outil de vérification absent : redémarre l'ordinateur." : "Mot de passe incorrect. Réessaie.");
+        int code = r > 0 && WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+        snprintf(message, sizeof message, "%s",
+                 code == 127 ? "Outil de vérification absent : redémarre l'ordinateur." :
+                 code == 6 ? "Trop d'essais ratés : compte bloqué quelques minutes." :
+                             "Mot de passe incorrect. Réessaie.");
     }
     for (int i = 0; i < nwins; i++) nx_redraw(wins[i]);
 }

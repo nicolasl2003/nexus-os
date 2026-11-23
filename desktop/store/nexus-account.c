@@ -29,6 +29,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "nexus-secu.h"   /* blocage après plusieurs erreurs + journal */
+
 static bool valid_name(const char *s)
 {
     size_t n = strlen(s);
@@ -104,9 +106,17 @@ int main(int argc, char **argv)
         if (!me || strcmp(me->pw_name, name)) return fail("On ne peut vérifier que son propre mot de passe.", 2);
         char pwd[256] = "";
         read_line(pwd, sizeof pwd);
+        int remaining;
+        if (secu_locked(name, &remaining)) {
+            explicit_bzero(pwd, sizeof pwd);
+            char m[120];
+            secu_locked_msg(m, sizeof m, remaining);
+            return fail(m, 6);
+        }
         bool ok = hash_ok(name, pwd);
         explicit_bzero(pwd, sizeof pwd);
-        if (!ok) { sleep(2); return 3; }
+        if (!ok) { secu_fail(name, "écran verrouillé"); sleep(2); return 3; }
+        secu_ok(name, "déverrouillage de l'écran");
         return 0;
     }
     if (!add && !pw && !del) return fail("Action inconnue", 2);
@@ -122,12 +132,24 @@ int main(int argc, char **argv)
     if (add || pw) read_line(newpw, sizeof newpw);
 
     if (getuid() != 0) {
-        bool ok = hash_ok("root", auth) || (pw && !strcmp(name, caller_name) && hash_ok(name, auth));
+        /* compte dont le mot de passe est demandé : root, ou soi-même (passwd) */
+        bool self = pw && !strcmp(name, caller_name);
+        int remaining;
+        if (secu_locked("root", &remaining) && (!self || secu_locked(name, &remaining))) {
+            explicit_bzero(auth, sizeof auth);
+            char m[120];
+            secu_locked_msg(m, sizeof m, remaining);
+            return fail(m, 6);
+        }
+        bool root_ok = !secu_locked("root", NULL) && hash_ok("root", auth);
+        bool ok = root_ok || (self && !secu_locked(name, NULL) && hash_ok(name, auth));
         explicit_bzero(auth, sizeof auth);
         if (!ok) {
+            secu_fail(self ? name : "root", "Paramètres → Comptes");
             sleep(2);
             return fail("Mot de passe incorrect", 3);
         }
+        secu_ok(root_ok ? "root" : name, "Paramètres → Comptes");
     }
     if (setgid(0) != 0 || setuid(0) != 0) return fail("Droits administrateur indisponibles", 1);
     clearenv();
@@ -158,6 +180,7 @@ int main(int argc, char **argv)
         int r = set_password(name, newpw);
         explicit_bzero(newpw, sizeof newpw);
         if (r != 0) return fail("Compte créé, mais le mot de passe n'a pas pu être enregistré.", 1);
+        secu_log("COMPTE créé : %s (par %s)", name, caller_name);
         printf("Compte %s créé.\n", name);
         return 0;
     }
@@ -166,6 +189,7 @@ int main(int argc, char **argv)
         int r = set_password(name, newpw);
         explicit_bzero(newpw, sizeof newpw);
         if (r != 0) return fail("Échec du changement de mot de passe.", 1);
+        secu_log("COMPTE : mot de passe de %s changé (par %s)", name, caller_name);
         printf("Mot de passe de %s changé.\n", name);
         return 0;
     }
@@ -180,6 +204,7 @@ int main(int argc, char **argv)
         char *a6[] = { "rm", "-rf", home, NULL };
         run(a6, NULL);
     }
+    secu_log("COMPTE supprimé : %s%s (par %s)", name, wipe ? " et ses fichiers" : "", caller_name);
     printf("Compte %s supprimé.\n", name);
     return 0;
 }

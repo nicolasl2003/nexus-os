@@ -24,6 +24,14 @@ install -m 755 "$MINISIGN" usr/bin/minisign
 mkdir -p etc/npk/keys
 install -m 644 "$NPK_PUB" etc/npk/keys/nexus-npk.pub
 
+# Disque chiffré (nexus-disque, au démarrage, avant que /data soit monté) :
+# cryptsetup, e2fsck et resize2fs statiques, compilés avec la pile graphique
+GUI_SBIN="$BUILD_DIR/gui/sysroot/usr/local/sbin"
+for t in cryptsetup e2fsck resize2fs; do
+    [ -x "$GUI_SBIN/$t" ] || { echo "$t absent : lance 'make gui-stack'" >&2; exit 1; }
+    install -m 755 "$GUI_SBIN/$t" "usr/sbin/$t"
+done
+
 # Bureau embarqué : les paquets du bureau (et leurs dépendances) sont copiés
 # dans l'image, avec l'INDEX signé. Au premier démarrage avec disque, rcS les
 # installe sans réseau : l'assistant de configuration graphique peut s'ouvrir

@@ -1,5 +1,5 @@
 NAME=parefeu
-VERSION=1.1.1
+VERSION=1.2.0
 DEPENDS=""
 DESC="Pare-feu de Nexus OS (nftables) : bloque les connexions entrantes non demandées"
 

@@ -58,6 +58,8 @@ case "${1:-}" in
         table | grep -q "^$k|" || { echo "nexus-keymap : disposition inconnue « $k » (voir : nexus-keymap list)" >&2; exit 2; }
         echo "$k" > /etc/keyboard
         [ -d /data ] && mountpoint -q /data && echo "$k" > /data/keyboard
+        # Disque chiffré : même disposition pour taper la phrase au démarrage
+        [ -s /run/nexus-data.dev ] && DM_DISABLE_UDEV=1 cryptsetup config "$(cat /run/nexus-data.dev)" --subsystem "$k" 2>/dev/null
         apply_console "$k"
         echo "Clavier : $(field "$k" 4)" ;;
     *) echo "Usage : nexus-keymap [list | set <id> | xkb]" >&2; exit 2 ;;

@@ -36,6 +36,12 @@ REPO_URL=$(cat "$DB/REPO" 2>/dev/null)
 
 die() { printf '\033[1;31mnpk :\033[0m %s\n' "$*" >&2; exit 1; }
 say() { printf '\033[1;36m::\033[0m %s\n' "$*"; }
+# Journal de sécurité (Paramètres → Protection) : installations et suppressions
+journal() {
+    [ "$NPK_ROOT" = /usr/local ] && [ "$(id -u)" = 0 ] || return 0
+    mkdir -p /usr/local/var/log
+    ( umask 077; echo "$(date '+%Y-%m-%d %H:%M:%S') PAQUETS : $* (par ${NEXUS_PAR:-root})" >> /usr/local/var/log/securite.log )
+}
 
 # ---------- Outils internes ----------
 
@@ -288,6 +294,7 @@ cmd_install() {
     for _p in "$@"; do resolve "$_p"; done
     say "Paquets à traiter :$ORDER"
     for _p in $ORDER; do install_one "$_p"; done
+    journal "installé :$ORDER"
 }
 
 cmd_remove() {
@@ -312,6 +319,7 @@ cmd_remove() {
         rm -rf "$DB/installed/$_p"
         say "$_p supprimé"
     done
+    journal "supprimé : $*"
 }
 
 # Paquets installés dont le dépôt propose une autre version (un nom par ligne)

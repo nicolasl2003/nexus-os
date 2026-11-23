@@ -7,6 +7,7 @@
  * ouvre alors la session de l'utilisateur.
  */
 #define _GNU_SOURCE
+#include "nexus-secu.h"
 #include "nexus-ui.h"
 
 #include <crypt.h>
@@ -89,7 +90,16 @@ static void submit(void)
 {
     if (logging_in || time(NULL) < blocked_until) return;
     const char *user = accounts[cur].name;
+    int remaining;
+    if (secu_locked(user, &remaining)) {          /* trop d'erreurs (si le blocage est activé) */
+        msg_error = true;
+        secu_locked_msg(message, sizeof message, remaining);
+        memset(password, 0, sizeof password);
+        nx_redraw(win);
+        return;
+    }
     if (check_password(user, password)) {
+        secu_ok(user, "connexion");
         int fd = open(RESULT_FILE, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
         if (fd >= 0) {
             if (write(fd, user, strlen(user)) < 0) { /* rien : nexus-login réaffichera l'écran */ }
@@ -103,7 +113,10 @@ static void submit(void)
         snprintf(message, sizeof message, "Ouverture de la session…");
     } else {
         msg_error = true;
-        snprintf(message, sizeof message, "Mot de passe incorrect. Réessaie.");
+        if (secu_fail(user, "écran de connexion")) {
+            secu_locked(user, &remaining);
+            secu_locked_msg(message, sizeof message, remaining);
+        } else snprintf(message, sizeof message, "Mot de passe incorrect. Réessaie.");
         blocked_until = time(NULL) + 1;   /* freine les essais au hasard */
     }
     memset(password, 0, sizeof password);

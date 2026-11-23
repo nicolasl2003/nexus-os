@@ -92,3 +92,16 @@ CONFIG_HARDENED_USERCOPY=y
 # Pas d'accès direct à la mémoire physique ni à la mémoire du noyau
 CONFIG_STRICT_DEVMEM=y
 CONFIG_IO_STRICT_DEVMEM=y
+
+# ---- Chiffrement du disque de données (Nexus 0.15, cryptsetup / LUKS2) ----
+CONFIG_MD=y
+CONFIG_BLK_DEV_DM=y
+CONFIG_DM_CRYPT=y
+CONFIG_CRYPTO_XTS=y
+CONFIG_CRYPTO_AES=y
+CONFIG_CRYPTO_AES_NI_INTEL=y
+CONFIG_CRYPTO_SHA256=y
+CONFIG_CRYPTO_SHA512=y
+# interface crypto du noyau utilisée par cryptsetup (zones de clés LUKS)
+CONFIG_CRYPTO_USER_API_HASH=y
+CONFIG_CRYPTO_USER_API_SKCIPHER=y

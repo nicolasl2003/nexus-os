@@ -1,5 +1,7 @@
 #!/bin/sh
 # Script de démarrage de Nexus OS
+# Fuseau horaire (heure de Paris, été/hiver) : services, journaux, consoles
+export TZ="${TZ:-CET-1CEST,M3.5.0,M10.5.0/3}"
 mount -t proc     proc     /proc
 mount -t sysfs    sysfs    /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
@@ -16,10 +18,12 @@ mkdir -p -m 1777 /run/user
 # Persistance : si un disque étiqueté NEXUS_DATA existe, on le monte sur
 # /data et on y redirige /root, /home, /usr/local et les comptes.
 # Sinon on est en "mode live" : tout reste en mémoire.
+# nexus-disque s'occupe du disque chiffré (phrase secrète demandée ici) et du
+# chiffrement demandé dans Paramètres → Protection.
 PERSIST=0
-if DATA_DEV=$(findfs LABEL=NEXUS_DATA 2>/dev/null); then
-    mkdir -p /data
-    if mount -t ext4 "$DATA_DEV" /data; then
+if /usr/sbin/nexus-disque monter; then
+    DATA_DEV=$(cat /run/nexus-data.src 2>/dev/null)
+    if mountpoint -q /data; then
         PERSIST=1
         for dir in root home; do
             if [ ! -d "/data/$dir" ]; then

@@ -2,6 +2,8 @@
 # Alpine Linux est nativement basée sur musl : compilateur C ET C++
 # (harfbuzz, utilisé pour le rendu du texte, est en C++), même musl 1.2.5
 # que le reste de Nexus OS. Tout est compilé depuis les sources, en statique.
+# (cryptsetup, pour le chiffrement du disque, utilise en plus les bibliothèques
+#  statiques d'Alpine : device-mapper, json-c, argon2, popt, openssl, blkid.)
 FROM alpine:3.21
 
 RUN apk add --no-cache \
@@ -9,6 +11,9 @@ RUN apk add --no-cache \
         meson ninja-build pkgconf cmake \
         python3 py3-packaging perl gperf bison flex \
         wget xz bzip2 tar coreutils zlib-dev libpng-dev \
-        hwdata-dev hwdata-pnp
+        hwdata-dev hwdata-pnp \
+        lvm2-dev device-mapper-static json-c-dev argon2-dev argon2-static \
+        popt-dev popt-static openssl-dev openssl-libs-static \
+        util-linux-dev util-linux-static
 
 WORKDIR /work

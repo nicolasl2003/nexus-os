@@ -9,6 +9,7 @@
  * Options : --wallpaper, --colors, --panel, --icons, --display, --about
  */
 #define _GNU_SOURCE
+#include "nexus-secu.h"
 #include "nexus-ui.h"
 
 #include <ctype.h>
@@ -34,12 +35,12 @@
 #define PAD      30
 
 enum { SEC_WALL, SEC_COLORS, SEC_THEME, SEC_PANEL, SEC_ICONS, SEC_WIDGETS, SEC_DISPLAY, SEC_LOCK,
-       SEC_SECURITY, SEC_KEYBOARD, SEC_ACCOUNTS, SEC_ABOUT, SEC_COUNT };
+       SEC_SECURITY, SEC_PROTECTION, SEC_KEYBOARD, SEC_ACCOUNTS, SEC_ABOUT, SEC_COUNT };
 static const struct { const char *label, *icon; } sections[SEC_COUNT] = {
     { "Fond d'écran", "image" },     { "Couleurs", "palette" },
     { "Thème", "display" },          { "Barre et menu", "panel" },    { "Icônes", "apps" },
     { "Widgets", "monitor" },        { "Affichage", "display" },
-    { "Verrouillage", "lock" },      { "Sécurité", "lock" },
+    { "Verrouillage", "lock" },      { "Sécurité", "lock" },          { "Protection", "disk" },
     { "Clavier", "keyboard" },       { "Comptes", "user" },           { "À propos", "info" },
 };
 static int section = SEC_WALL;
@@ -49,7 +50,7 @@ static int section = SEC_WALL;
 enum kind { K_NAV, K_WALL, K_ACCENT, K_SCALE, K_TOGGLE, K_PANEL, K_ISIZE, K_ISTYLE, K_ISHAPE,
             K_OPACITY, K_TINT, K_MENU, K_WSIZE, K_WSTYLE, K_WRESET,
             K_ACC_ADD, K_ACC_PW, K_ACC_DEL, K_DLG_FIELD, K_DLG_OK, K_DLG_CANCEL, K_DLG_WIPE, K_KB, K_THEME, K_LOCKDELAY, K_LOCKNOW,
-            K_FW, K_SEC_OK, K_SEC_CANCEL, K_SEC_BG };
+            K_FW, K_SEC_OK, K_SEC_CANCEL, K_SEC_BG, K_SEC_FIELD, K_BLOCAGE, K_CRYPT, K_JOURNAL };
 struct rect { double x, y, w, h; enum kind kind; int index; };
 static struct rect rects[96];
 static int nrects;
@@ -357,19 +358,25 @@ static void toggle_row(cairo_t *cr, double x0, double y, double w, enum kind k, 
     add_rect(x0, y, w, 56, k, i);
 }
 
-/* Bouton texte (contour d'accent) */
-static void button_row(cairo_t *cr, double x, double y, const char *label, enum kind k)
+/* Bouton texte (contour d'accent) ; retourne sa largeur */
+static double button_at(cairo_t *cr, double x, double y, const char *label, enum kind k, int i)
 {
     nx_color a = nx_accent_color();
     double w = nx_text_width(cr, label, 13.5, true) + 36;
     nx_rounded_rect(cr, x, y, w, 38, 19);
-    nx_set(cr, is_hover(k, 0) ? nx_alpha(a, 0.12) : nx_rgb("#ffffff"));
+    nx_set(cr, is_hover(k, i) ? nx_alpha(a, 0.12) : nx_rgb("#ffffff"));
     cairo_fill_preserve(cr);
     nx_set(cr, a);
     cairo_set_line_width(cr, 1.5);
     cairo_stroke(cr);
     nx_text(cr, label, 13.5, true, a, x, y, w, 38, NX_CENTER);
-    add_rect(x, y, w, 38, k, 0);
+    add_rect(x, y, w, 38, k, i);
+    return w;
+}
+
+static void button_row(cairo_t *cr, double x, double y, const char *label, enum kind k)
+{
+    button_at(cr, x, y, label, k, 0);
 }
 
 /* Petite barre des tâches d'aperçu (fond, logo Nexus, quelques applications) */
@@ -1036,9 +1043,6 @@ static void draw_lock_section(cairo_t *cr, double x0, double cw)
 
 #define PKG_HELPER "/usr/local/libexec/nexus-pkg"
 static bool fw_installed, fw_active, fw_ssh, fw_ping = true;
-static char sec_action[16];          /* réglage en attente du mot de passe */
-static char sec_pw[128], sec_msg[200];
-static bool sec_dlg;
 
 static void load_firewall(void)
 {
@@ -1059,8 +1063,25 @@ static void load_firewall(void)
     }
 }
 
-/* nexus-pkg parefeu <réglage>, mot de passe sur l'entrée standard */
-static int run_fw_helper(const char *action, const char *pw, char *out, size_t outn)
+/* ---------- Protection : blocage, chiffrement, journal ---------- */
+
+static struct secu_conf prot;            /* blocage après plusieurs erreurs */
+enum { CR_LIVE, CR_NONE, CR_PENDING, CR_DONE };
+static int crypt_state;
+static bool crypt_tool;
+
+static void load_protection(void)
+{
+    prot = secu_read_conf();
+    crypt_tool = access("/usr/sbin/cryptsetup", X_OK) == 0;
+    if (access("/dev/mapper/nexus-data", F_OK) == 0) crypt_state = CR_DONE;
+    else if (access("/data/etc", F_OK) != 0) crypt_state = CR_LIVE;
+    else if (access("/data/etc/.chiffrement-cle", F_OK) == 0) crypt_state = CR_PENDING;
+    else crypt_state = CR_NONE;
+}
+
+/* nexus-pkg <args...>, avec un texte sur l'entrée standard ; sortie dans out */
+static int run_pkg_helper(char *const args[], const char *input, char *out, size_t outn)
 {
     int in[2], o[2];
     if (pipe(in) || pipe(o)) return -1;
@@ -1069,19 +1090,18 @@ static int run_fw_helper(const char *action, const char *pw, char *out, size_t o
     if (pid == 0) {
         dup2(in[0], 0); dup2(o[1], 1); dup2(o[1], 2);
         close(in[0]); close(in[1]); close(o[0]); close(o[1]);
-        execl(PKG_HELPER, "nexus-pkg", "parefeu", action, (char *)NULL);
+        execv(PKG_HELPER, args);
         _exit(127);
     }
     close(in[0]); close(o[1]);
-    char line[160];
-    snprintf(line, sizeof line, "%s\n", pw);
-    if (write(in[1], line, strlen(line)) < 0) { /* l'outil refusera */ }
-    explicit_bzero(line, sizeof line);
+    if (input && write(in[1], input, strlen(input)) < 0) { /* l'outil refusera */ }
     close(in[1]);
     size_t n = 0;
     ssize_t r;
     while (n + 1 < outn && (r = read(o[0], out + n, outn - 1 - n)) > 0) n += r;
     out[n] = 0;
+    char sink[512];
+    while (read(o[0], sink, sizeof sink) > 0) {}   /* (sortie trop longue : le reste est ignoré) */
     close(o[0]);
     int st = 0;
     if (pid > 0) waitpid(pid, &st, 0);
@@ -1089,25 +1109,95 @@ static int run_fw_helper(const char *action, const char *pw, char *out, size_t o
     return pid > 0 && WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 }
 
-static void sec_submit(void)
+/* Boîte de dialogue « mot de passe administrateur » (+ phrases secrètes) */
+enum { SD_FW, SD_BLOCAGE, SD_CRYPT_ON, SD_CRYPT_OFF, SD_CRYPT_PHRASE, SD_JOURNAL };
+static int sd_kind;
+static char sec_action[16];              /* argument de l'action (pare-feu, blocage) */
+static char sd_f[4][128];                /* champs saisis */
+static int sd_nf, sd_first, sd_focus;    /* nombre de champs, premier affiché, champ actif */
+static char sec_msg[200];
+static bool sec_dlg;
+static char crypt_info[200];             /* message sous la carte du chiffrement */
+
+static char *journal_text;               /* journal affiché (NULL : fermé) */
+static int journal_top;                  /* première ligne affichée */
+
+static void sd_clear(void)
 {
-    if (getuid() != 0 && !sec_pw[0]) { snprintf(sec_msg, sizeof sec_msg, "Saisis le mot de passe administrateur."); return; }
-    char out[256] = "";
-    int code = run_fw_helper(sec_action, sec_pw, out, sizeof out);
-    explicit_bzero(sec_pw, sizeof sec_pw);
-    if (code == 0) { sec_dlg = false; load_firewall(); return; }
-    snprintf(sec_msg, sizeof sec_msg, "%s", code == 3 ? "Mot de passe incorrect." :
-             code == 127 ? "Outil absent : mets à jour le système (npk upgrade)." : "Le réglage a échoué.");
+    for (int i = 0; i < 4; i++) explicit_bzero(sd_f[i], sizeof sd_f[i]);
 }
 
-static void sec_request(const char *action)
+static void sec_close(void) { sec_dlg = false; sd_clear(); }
+
+static void sec_submit(void)
 {
-    snprintf(sec_action, sizeof sec_action, "%s", action);
-    sec_msg[0] = 0;
-    explicit_bzero(sec_pw, sizeof sec_pw);
-    if (getuid() == 0) { sec_submit(); return; }   /* root : pas de mot de passe à demander */
+    for (int i = sd_first; i < sd_nf; i++)
+        if (!sd_f[i][0]) { sd_focus = i; snprintf(sec_msg, sizeof sec_msg, "Remplis tous les champs."); return; }
+    bool new_phrase = sd_kind == SD_CRYPT_ON || sd_kind == SD_CRYPT_PHRASE;
+    if (new_phrase) {
+        const char *p1 = sd_f[sd_nf - 2], *p2 = sd_f[sd_nf - 1];
+        if (strlen(p1) < 8) { snprintf(sec_msg, sizeof sec_msg, "Phrase secrète trop courte (8 caractères minimum)."); return; }
+        if (strcmp(p1, p2)) { snprintf(sec_msg, sizeof sec_msg, "Les deux phrases secrètes ne correspondent pas."); return; }
+    }
+    /* Entrée de l'outil : mot de passe root (sauf pour root), puis les phrases */
+    char input[600] = "";
+    for (int i = sd_first; i < sd_nf - (new_phrase ? 1 : 0); i++) {
+        strncat(input, sd_f[i], sizeof input - strlen(input) - 2);
+        strcat(input, "\n");
+    }
+    static char out[64000];
+    char *args[4] = { "nexus-pkg", NULL, NULL, NULL };
+    switch (sd_kind) {
+    case SD_FW:           args[1] = "parefeu"; args[2] = sec_action; break;
+    case SD_BLOCAGE:      args[1] = "blocage"; args[2] = sec_action; break;
+    case SD_CRYPT_ON:     args[1] = "chiffrement"; args[2] = "on"; break;
+    case SD_CRYPT_OFF:    args[1] = "chiffrement"; args[2] = "off"; break;
+    case SD_CRYPT_PHRASE: args[1] = "chiffrement"; args[2] = "phrase"; break;
+    case SD_JOURNAL:      args[1] = "journal"; break;
+    }
+    int code = run_pkg_helper(args, input, out, sizeof out);
+    explicit_bzero(input, sizeof input);
+    if (code == 0) {
+        sec_close();
+        load_firewall();
+        load_protection();
+        if (sd_kind == SD_CRYPT_ON)
+            snprintf(crypt_info, sizeof crypt_info, "C'est noté : le disque sera chiffré au prochain démarrage.");
+        else if (sd_kind == SD_CRYPT_OFF) snprintf(crypt_info, sizeof crypt_info, "Chiffrement annulé.");
+        else if (sd_kind == SD_CRYPT_PHRASE) snprintf(crypt_info, sizeof crypt_info, "Phrase secrète changée.");
+        else if (sd_kind == SD_JOURNAL) {
+            free(journal_text);
+            journal_text = strdup(out);
+            int n = 0;
+            for (const char *c = out; *c; c++) n += *c == '\n';
+            journal_top = n;                     /* (ramené à la fin au dessin) */
+        }
+        return;
+    }
+    /* erreur : on efface les champs et on explique */
+    sd_clear();
+    sd_focus = sd_first;
+    if (code == 3) snprintf(sec_msg, sizeof sec_msg, "Mot de passe administrateur incorrect.");
+    else if (code == 127) snprintf(sec_msg, sizeof sec_msg, "Outil absent : mets à jour le système (npk upgrade).");
+    else if (out[0]) { out[strcspn(out, "\n")] = 0; snprintf(sec_msg, sizeof sec_msg, "%s", out); }
+    else snprintf(sec_msg, sizeof sec_msg, "L'opération a échoué.");
+}
+
+static void sec_open(int kind, const char *action)
+{
+    sd_kind = kind;
+    snprintf(sec_action, sizeof sec_action, "%s", action ? action : "");
+    sec_msg[0] = crypt_info[0] = 0;
+    sd_clear();
+    sd_nf = kind == SD_CRYPT_ON ? 3 : kind == SD_CRYPT_PHRASE ? 4 : 1;
+    sd_first = getuid() == 0 ? 1 : 0;          /* root : pas de mot de passe à demander */
+    sd_focus = sd_first;
+    if (sd_first >= sd_nf) { sec_submit(); return; }
     sec_dlg = true;
 }
+
+/* Ancienne forme : réglage du pare-feu */
+static void sec_request(const char *action) { sec_open(SD_FW, action); }
 
 static void check_item(cairo_t *cr, double x, double y, double w, bool ok, const char *title, const char *sub)
 {
@@ -1122,6 +1212,66 @@ static void check_item(cairo_t *cr, double x, double y, double w, bool ok, const
     cairo_stroke(cr);
     nx_text(cr, title, 13.5, true, nx_rgb(NX_TEXT), x + 34, y + 2, w - 40, 20, NX_LEFT);
     nx_text(cr, sub, 12, false, nx_rgb(NX_SUBTLE), x + 34, y + 21, w - 40, 18, NX_LEFT);
+}
+
+static void draw_protection_section(cairo_t *cr, double x0, double cw)
+{
+    section_title(cr, x0, "Protection", "Blocage des comptes, chiffrement du disque et journal de sécurité.");
+    char sub[160];
+    snprintf(sub, sizeof sub, "Après %d mots de passe ratés, le compte est bloqué %d minutes", prot.essais, prot.duree_min);
+    toggle_row(cr, x0, 96, cw, K_BLOCAGE, 0, "Blocage après plusieurs erreurs", sub, prot.blocage);
+
+    /* Chiffrement du disque */
+    double y = 172;
+    nx_text(cr, "Chiffrement du disque", 14, true, nx_rgb(NX_TEXT), x0, y, 0, 24, NX_LEFT);
+    y += 30;
+    static const char *titles[] = { "Pas de disque (mode live)", "Disque non chiffré",
+                                    "Chiffrement prévu au prochain démarrage", "Disque chiffré" };
+    static const char *subs[] = { "Rien n'est enregistré : il n'y a rien à chiffrer.",
+                                  "Si quelqu'un prend le disque, il peut lire tes fichiers.",
+                                  "Redémarre : le disque sera chiffré avant l'ouverture de session.",
+                                  "La phrase secrète est demandée à chaque démarrage." };
+    static const char *cols[] = { "#8a93a6", "#8a93a6", "#e08a1e", "#2fb36a" };
+    nx_color c = nx_rgb(cols[crypt_state]);
+    nx_rounded_rect(cr, x0, y, cw, 64, 12);
+    nx_set(cr, nx_alpha(c, 0.12));
+    cairo_fill(cr);
+    nx_icon(cr, "lock", x0 + 16, y + 16, 32, nx_mix(c, nx_rgb("#000000"), 0.2));
+    nx_text(cr, titles[crypt_state], 15.5, true, nx_rgb(NX_TEXT), x0 + 62, y + 10, cw - 80, 24, NX_LEFT);
+    nx_text(cr, subs[crypt_state], 12.5, false, nx_rgb(NX_SUBTLE), x0 + 62, y + 34, cw - 80, 20, NX_LEFT);
+    y += 78;
+    if (!crypt_tool && crypt_state != CR_LIVE) {
+        para_text(cr, "Outil de chiffrement absent : mets à jour Nexus OS (nouvelle image).", x0, y, cw);
+        y += 30;
+    } else if (crypt_state == CR_NONE) {
+        button_at(cr, x0, y, "Chiffrer le disque…", K_CRYPT, 0);
+        y += 50;
+    } else if (crypt_state == CR_PENDING) {
+        double w = button_at(cr, x0, y, "Redémarrer maintenant", K_CRYPT, 1);
+        button_at(cr, x0 + w + 12, y, "Annuler le chiffrement", K_CRYPT, 2);
+        y += 50;
+    } else if (crypt_state == CR_DONE) {
+        button_at(cr, x0, y, "Changer la phrase secrète…", K_CRYPT, 3);
+        y += 50;
+    }
+    if (crypt_info[0]) {
+        nx_text(cr, crypt_info, 12.5, true, nx_accent_color(), x0, y - 4, cw, 20, NX_LEFT);
+        y += 22;
+    }
+    if (crypt_state != CR_LIVE) {
+        para_text(cr, "Important : sans la phrase secrète, personne (même toi) ne peut relire le disque. "
+                      "Note-la en lieu sûr. Le chiffrement ne peut pas être retiré ensuite.", x0, y, cw);
+        y += 52;
+    }
+
+    /* Journal */
+    y += 6;
+    nx_text(cr, "Journal de sécurité", 14, true, nx_rgb(NX_TEXT), x0, y, 0, 24, NX_LEFT);
+    y += 28;
+    para_text(cr, "Connexions, mots de passe ratés, blocages, logiciels installés ou supprimés, "
+                  "changements de réglages de sécurité.", x0, y, cw);
+    y += 46;
+    button_at(cr, x0, y, "Afficher le journal…", K_JOURNAL, 0);
 }
 
 static void draw_security_section(cairo_t *cr, double x0, double cw)
@@ -1152,13 +1302,19 @@ static void draw_security_section(cairo_t *cr, double x0, double cw)
     nx_text(cr, "Protections", 14, true, nx_rgb(NX_TEXT), x0, y, 0, 24, NX_LEFT);
     y += 30;
     double w2 = (cw - 16) / 2;
-    char lock[80];
+    char lock[80], bl[80];
     if (nx_conf.lock_minutes > 0) snprintf(lock, sizeof lock, "Après %d min d'inactivité", nx_conf.lock_minutes);
     else snprintf(lock, sizeof lock, "Désactivé : voir Verrouillage");
+    if (prot.blocage) snprintf(bl, sizeof bl, "Après %d erreurs, %d min", prot.essais, prot.duree_min);
+    else snprintf(bl, sizeof bl, "Désactivé : voir Protection");
     check_item(cr, x0, y, w2, true, "Dossiers personnels privés", "Les autres comptes ne lisent pas tes fichiers");
     check_item(cr, x0 + w2 + 16, y, w2, true, "Logiciels signés", "Chaque paquet est vérifié avant installation");
     check_item(cr, x0, y + 50, w2, true, "Noyau protégé", "Yama, adresses aléatoires, sysctl durcis");
     check_item(cr, x0 + w2 + 16, y + 50, w2, nx_conf.lock_minutes > 0, "Verrouillage automatique", lock);
+    check_item(cr, x0, y + 100, w2, prot.blocage, "Blocage des comptes", bl);
+    check_item(cr, x0 + w2 + 16, y + 100, w2, crypt_state == CR_DONE, "Disque chiffré",
+               crypt_state == CR_DONE ? "Phrase secrète au démarrage" :
+               crypt_state == CR_PENDING ? "Au prochain démarrage" : "Désactivé : voir Protection");
 }
 
 static void draw_sec_dialog(cairo_t *cr, int width, int height)
@@ -1166,28 +1322,50 @@ static void draw_sec_dialog(cairo_t *cr, int width, int height)
     cairo_set_source_rgba(cr, 0.05, 0.07, 0.1, 0.35);
     cairo_paint(cr);
     add_rect(0, 0, width, height, K_SEC_BG, 0);   /* fond : capte les clics, ne fait rien */
-    double dw = 440, dh = 220, dx = (width - dw) / 2, dy = (height - dh) / 2;
+    static const char *titles[] = { "Mot de passe administrateur", "Mot de passe administrateur",
+                                    "Chiffrer le disque", "Annuler le chiffrement",
+                                    "Changer la phrase secrète", "Journal de sécurité" };
+    static const char *subs[] = {
+        "Modifier le pare-feu demande le mot de passe root.",
+        "Changer le blocage des comptes demande le mot de passe root.",
+        "Choisis une phrase secrète (8 caractères minimum), demandée à chaque démarrage. "
+        "Note-la : sans elle, tes fichiers sont perdus.",
+        "Le disque ne sera pas chiffré au prochain démarrage.",
+        "Le disque reste chiffré ; seule la phrase demandée au démarrage change.",
+        "Lire le journal demande le mot de passe root." };
+    static const char *labels[6][4] = {
+        { "Mot de passe root" }, { "Mot de passe root" },
+        { "Mot de passe root", "Phrase secrète du disque", "Confirme la phrase secrète" },
+        { "Mot de passe root" },
+        { "Mot de passe root", "Phrase secrète actuelle", "Nouvelle phrase secrète", "Confirme la nouvelle phrase" },
+        { "Mot de passe root" } };
+    int shown = sd_nf - sd_first;
+    double dw = 460, dh = 190 + shown * 66, dx = (width - dw) / 2, dy = (height - dh) / 2;
     nx_rounded_rect(cr, dx, dy, dw, dh, 14);
     cairo_set_source_rgb(cr, 1, 1, 1);
     cairo_fill(cr);
-    nx_text(cr, "Mot de passe administrateur", 17, true, nx_rgb(NX_TEXT), dx + 24, dy + 18, dw - 48, 28, NX_LEFT);
-    nx_text(cr, "Modifier le pare-feu demande le mot de passe root.", 13, false, nx_rgb(NX_SUBTLE),
-            dx + 24, dy + 50, dw - 48, 20, NX_LEFT);
-    nx_rounded_rect(cr, dx + 24, dy + 82, dw - 48, 42, 9);
-    cairo_set_source_rgb(cr, 1, 1, 1);
-    cairo_fill_preserve(cr);
-    nx_set(cr, nx_accent_color());
-    cairo_set_line_width(cr, 2);
-    cairo_stroke(cr);
-    int n = 0;
-    for (const char *c = sec_pw; *c; c++) if (((unsigned char)*c & 0xC0) != 0x80) n++;
-    for (int i = 0; i < n && i < 24; i++) {
-        cairo_new_path(cr);
-        cairo_arc(cr, dx + 42 + i * 14, dy + 103, 4, 0, 2 * M_PI);
-        nx_set(cr, nx_rgb(NX_TEXT));
-        cairo_fill(cr);
+    nx_text(cr, titles[sd_kind], 17, true, nx_rgb(NX_TEXT), dx + 24, dy + 18, dw - 48, 28, NX_LEFT);
+    para_text(cr, subs[sd_kind], dx + 24, dy + 50, dw - 48);
+    double fy = dy + 118;                      /* (explication : jusqu'à 3 lignes) */
+    for (int i = sd_first; i < sd_nf; i++, fy += 66) {
+        nx_text(cr, labels[sd_kind][i], 12.5, true, nx_rgb(NX_SUBTLE), dx + 24, fy, dw - 48, 18, NX_LEFT);
+        nx_rounded_rect(cr, dx + 24, fy + 20, dw - 48, 40, 9);
+        cairo_set_source_rgb(cr, 1, 1, 1);
+        cairo_fill_preserve(cr);
+        nx_set(cr, i == sd_focus ? nx_accent_color() : nx_rgb("#c5cbd6"));
+        cairo_set_line_width(cr, i == sd_focus ? 2 : 1);
+        cairo_stroke(cr);
+        add_rect(dx + 24, fy + 20, dw - 48, 40, K_SEC_FIELD, i);
+        int n = 0;
+        for (const char *c = sd_f[i]; *c; c++) if (((unsigned char)*c & 0xC0) != 0x80) n++;
+        for (int k = 0; k < n && k < 26; k++) {
+            cairo_new_path(cr);
+            cairo_arc(cr, dx + 42 + k * 14, fy + 40, 4, 0, 2 * M_PI);
+            nx_set(cr, nx_rgb(NX_TEXT));
+            cairo_fill(cr);
+        }
     }
-    if (sec_msg[0]) nx_text(cr, sec_msg, 12.5, true, nx_rgb("#c0392b"), dx + 24, dy + 130, dw - 48, 20, NX_LEFT);
+    if (sec_msg[0]) nx_text(cr, sec_msg, 12.5, true, nx_rgb("#c0392b"), dx + 24, fy + 2, dw - 48, 20, NX_LEFT);
     double by = dy + dh - 56;
     nx_rounded_rect(cr, dx + dw - 24 - 120, by, 120, 36, 8);
     nx_set(cr, is_hover(K_SEC_OK, 0) ? nx_mix(nx_accent_color(), nx_rgb("#ffffff"), 0.15) : nx_accent_color());
@@ -1199,6 +1377,54 @@ static void draw_sec_dialog(cairo_t *cr, int width, int height)
     cairo_fill(cr);
     nx_text(cr, "Annuler", 13.5, false, nx_rgb(NX_TEXT), dx + dw - 24 - 240, by, 110, 36, NX_CENTER);
     add_rect(dx + dw - 24 - 240, by, 110, 36, K_SEC_CANCEL, 0);
+}
+
+/* Journal de sécurité : liste défilante (molette, flèches, Page haut/bas) */
+#define JOURNAL_ROWS 22
+static void draw_journal(cairo_t *cr, int width, int height)
+{
+    cairo_set_source_rgba(cr, 0.05, 0.07, 0.1, 0.35);
+    cairo_paint(cr);
+    add_rect(0, 0, width, height, K_SEC_BG, 0);
+    double dx = 40, dy = 30, dw = width - 80, dh = height - 60;
+    nx_rounded_rect(cr, dx, dy, dw, dh, 14);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_fill(cr);
+    nx_text(cr, "Journal de sécurité", 17, true, nx_rgb(NX_TEXT), dx + 24, dy + 16, dw - 48, 28, NX_LEFT);
+    /* lignes */
+    const char *lines[4000];
+    int n = 0;
+    for (char *p = journal_text; p && *p && n < 4000;) {
+        lines[n++] = p;
+        char *e = strchr(p, '\n');
+        if (!e) break;
+        p = e + 1;
+    }
+    int max_top = n > JOURNAL_ROWS ? n - JOURNAL_ROWS : 0;
+    if (journal_top > max_top) journal_top = max_top;
+    if (journal_top < 0) journal_top = 0;
+    char info[80];
+    snprintf(info, sizeof info, "%d événement%s · du plus ancien au plus récent", n, n > 1 ? "s" : "");
+    nx_text(cr, info, 12, false, nx_rgb(NX_SUBTLE), dx + 24, dy + 44, dw - 48, 18, NX_LEFT);
+    double ly = dy + 72;
+    for (int i = journal_top; i < n && i < journal_top + JOURNAL_ROWS; i++, ly += 21) {
+        char buf[260];
+        size_t l = strcspn(lines[i], "\n");
+        snprintf(buf, sizeof buf, "%.*s", (int)(l < 259 ? l : 259), lines[i]);
+        bool bad = strstr(buf, "ÉCHEC") || strstr(buf, "BLOCAGE");
+        if (strlen(buf) > 19) {                  /* date en gris, événement ensuite */
+            char date[20];
+            snprintf(date, sizeof date, "%.19s", buf);
+            nx_text(cr, date, 11.5, false, nx_rgb(NX_SUBTLE), dx + 24, ly, 140, 20, NX_LEFT);
+            nx_text(cr, buf + 20, 12, bad, bad ? nx_rgb("#c0392b") : nx_rgb(NX_TEXT), dx + 166, ly, dw - 190, 20, NX_LEFT);
+        } else nx_text(cr, buf, 12, false, nx_rgb(NX_TEXT), dx + 24, ly, dw - 48, 20, NX_LEFT);
+    }
+    double by = dy + dh - 52;
+    nx_rounded_rect(cr, dx + dw - 24 - 120, by, 120, 36, 8);
+    nx_set(cr, is_hover(K_SEC_CANCEL, 1) ? nx_mix(nx_accent_color(), nx_rgb("#ffffff"), 0.15) : nx_accent_color());
+    cairo_fill(cr);
+    nx_text(cr, "Fermer", 13.5, true, nx_rgb("#ffffff"), dx + dw - 24 - 120, by, 120, 36, NX_CENTER);
+    add_rect(dx + dw - 24 - 120, by, 120, 36, K_SEC_CANCEL, 1);
 }
 
 /* ---------- Clavier ---------- */
@@ -1307,21 +1533,21 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     nx_icon(cr, "settings", 22, 22, 34, nx_rgb(NX_TEXT));
     nx_text(cr, "Paramètres", 16, true, nx_rgb(NX_TEXT), 64, 22, SIDE_W - 70, 34, NX_LEFT);
     for (int i = 0; i < SEC_COUNT; i++) {
-        double y = 76 + i * 43;
+        double y = 74 + i * 41;
         bool sel = i == section;
         if (sel || is_hover(K_NAV, i)) {
-            nx_rounded_rect(cr, 10, y, SIDE_W - 20, 42, 8);
+            nx_rounded_rect(cr, 10, y, SIDE_W - 20, 40, 8);
             nx_set(cr, sel ? nx_rgb("#ffffff") : nx_rgb("#e3e7ef"));
             cairo_fill(cr);
         }
         if (sel) {
-            nx_rounded_rect(cr, 10, y + 10, 4, 22, 2);
+            nx_rounded_rect(cr, 10, y + 9, 4, 22, 2);
             nx_set(cr, accent);
             cairo_fill(cr);
         }
-        nx_icon(cr, sections[i].icon, 26, y + 10, 22, nx_rgb(NX_TEXT));
-        nx_text(cr, sections[i].label, 14, sel, nx_rgb(NX_TEXT), 60, y, SIDE_W - 70, 42, NX_LEFT);
-        add_rect(10, y, SIDE_W - 20, 42, K_NAV, i);
+        nx_icon(cr, sections[i].icon, 26, y + 9, 22, nx_rgb(NX_TEXT));
+        nx_text(cr, sections[i].label, 14, sel, nx_rgb(NX_TEXT), 60, y, SIDE_W - 70, 40, NX_LEFT);
+        add_rect(10, y, SIDE_W - 20, 40, K_NAV, i);
     }
 
     double x0 = SIDE_W + PAD, cw = width - SIDE_W - 2 * PAD;
@@ -1337,10 +1563,12 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
     case SEC_THEME: draw_theme_section(cr, x0, cw); break;
     case SEC_LOCK: draw_lock_section(cr, x0, cw); break;
     case SEC_SECURITY: draw_security_section(cr, x0, cw); break;
+    case SEC_PROTECTION: draw_protection_section(cr, x0, cw); break;
     case SEC_ABOUT: draw_about(cr, x0, cw); break;
     }
     if (dlg) draw_account_dialog(cr, width, height);
     if (sec_dlg) draw_sec_dialog(cr, width, height);
+    if (journal_text) draw_journal(cr, width, height);
 }
 
 /* ---------- Souris ---------- */
@@ -1360,7 +1588,7 @@ static void click(struct rect *r)
     case K_NAV:
         section = r->index;
         if (section == SEC_ACCOUNTS) load_accounts();   /* comptes créés ailleurs entre-temps */
-        if (section == SEC_SECURITY) load_firewall();
+        if (section == SEC_SECURITY || section == SEC_PROTECTION) { load_firewall(); load_protection(); }
         break;
     case K_WALL:
         snprintf(nx_conf.wallpaper, sizeof nx_conf.wallpaper, "%s", walls[r->index].spec);
@@ -1394,8 +1622,20 @@ static void click(struct rect *r)
         break;
     }
     case K_SEC_OK: sec_submit(); break;
-    case K_SEC_CANCEL: sec_dlg = false; explicit_bzero(sec_pw, sizeof sec_pw); break;
+    case K_SEC_CANCEL:
+        if (r->index == 1) { free(journal_text); journal_text = NULL; }
+        else sec_close();
+        break;
     case K_SEC_BG: break;
+    case K_SEC_FIELD: sd_focus = r->index; break;
+    case K_BLOCAGE: sec_open(SD_BLOCAGE, prot.blocage ? "off" : "on"); break;
+    case K_JOURNAL: sec_open(SD_JOURNAL, NULL); break;
+    case K_CRYPT:
+        if (r->index == 0) sec_open(SD_CRYPT_ON, NULL);
+        else if (r->index == 2) sec_open(SD_CRYPT_OFF, NULL);
+        else if (r->index == 3) sec_open(SD_CRYPT_PHRASE, NULL);
+        else nx_spawn("/usr/local/libexec/nexus-power reboot");
+        break;
     case K_ISIZE: nx_conf.icon_size = r->index; apply(); break;
     case K_ISTYLE: nx_conf.icon_style = r->index; apply(); break;
     case K_ISHAPE: nx_conf.icon_shape = r->index; nx_conf.icon_style = 0; apply(); break;
@@ -1439,6 +1679,9 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
     case NX_RELEASE:
         if (r && value == BTN_LEFT) click(r);
         break;
+    case NX_SCROLL:
+        if (journal_text) { journal_top += value * 3; nx_redraw(w); }
+        break;
     default:
         break;
     }
@@ -1446,16 +1689,34 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
 
 static void key(struct nx_window *w, xkb_keysym_t sym, const char *utf8)
 {
+    if (journal_text) {
+        if (sym == XKB_KEY_Escape || sym == XKB_KEY_Return) { free(journal_text); journal_text = NULL; }
+        else if (sym == XKB_KEY_Up) journal_top--;
+        else if (sym == XKB_KEY_Down) journal_top++;
+        else if (sym == XKB_KEY_Page_Up) journal_top -= JOURNAL_ROWS - 2;
+        else if (sym == XKB_KEY_Page_Down) journal_top += JOURNAL_ROWS - 2;
+        else if (sym == XKB_KEY_Home) journal_top = 0;
+        else if (sym == XKB_KEY_End) journal_top = 1 << 20;
+        nx_redraw(w);
+        return;
+    }
     if (sec_dlg) {
-        if (sym == XKB_KEY_Escape) { sec_dlg = false; explicit_bzero(sec_pw, sizeof sec_pw); }
-        else if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter) sec_submit();
-        else if (sym == XKB_KEY_BackSpace) {
-            size_t l = strlen(sec_pw);
-            while (l > 0 && ((unsigned char)sec_pw[l - 1] & 0xC0) == 0x80) l--;
+        char *f = sd_f[sd_focus];
+        if (sym == XKB_KEY_Escape) sec_close();
+        else if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter) {
+            if (sd_focus < sd_nf - 1 && !sd_f[sd_focus + 1][0]) sd_focus++;   /* champ suivant */
+            else sec_submit();
+        } else if (sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab) {
+            sd_focus += nx_mod_shift() || sym == XKB_KEY_ISO_Left_Tab ? -1 : 1;
+            if (sd_focus >= sd_nf) sd_focus = sd_first;
+            if (sd_focus < sd_first) sd_focus = sd_nf - 1;
+        } else if (sym == XKB_KEY_BackSpace) {
+            size_t l = strlen(f);
+            while (l > 0 && ((unsigned char)f[l - 1] & 0xC0) == 0x80) l--;
             if (l > 0) l--;
-            sec_pw[l] = 0;
-        } else if (utf8 && (unsigned char)utf8[0] >= 0x20 && utf8[0] != 0x7f && strlen(sec_pw) + strlen(utf8) < sizeof sec_pw - 1)
-            strcat(sec_pw, utf8);
+            f[l] = 0;
+        } else if (utf8 && (unsigned char)utf8[0] >= 0x20 && utf8[0] != 0x7f && strlen(f) + strlen(utf8) < sizeof sd_f[0] - 1)
+            strcat(f, utf8);
         nx_redraw(w);
         return;
     }
@@ -1494,6 +1755,7 @@ int settings_main(int argc, char **argv)
         else if (!strcmp(argv[i], "--theme")) section = SEC_THEME;
         else if (!strcmp(argv[i], "--lock")) section = SEC_LOCK;
         else if (!strcmp(argv[i], "--security")) section = SEC_SECURITY;
+        else if (!strcmp(argv[i], "--protection")) section = SEC_PROTECTION;
         else if (!strcmp(argv[i], "--about")) section = SEC_ABOUT;
     }
     if (!nx_init()) return 1;
@@ -1502,6 +1764,7 @@ int settings_main(int argc, char **argv)
     load_accounts();
     load_keyboard();
     load_firewall();
+    load_protection();
     struct nx_handlers h = { .draw = draw, .pointer = pointer, .key = key };
     win = nx_toplevel_window(h, "Paramètres", "nexus-settings", WIN_W, WIN_H);
     if (!win) return 1;

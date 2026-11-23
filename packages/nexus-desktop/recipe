@@ -1,5 +1,5 @@
 NAME=nexus-desktop
-VERSION=0.14.0
+VERSION=0.15.0
 DEPENDS="labwc foot alsa wifi parefeu"
 DESC="Le bureau de Nexus OS : connexion graphique, barre des tâches, menu Démarrer, widgets, fichiers"
 

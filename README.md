@@ -777,3 +777,46 @@ Testé dans une VM vierge : dossier `drwx------`, Yama et sysctl actifs,
 ordinaire, SSH (dropbear) injoignable puis joignable après
 « Connexion à distance (SSH) » dans Paramètres → Sécurité (mauvais mot de
 passe refusé), Internet et `npk` fonctionnels pare-feu actif.
+
+## Nexus 0.15 : sécurité (lot 2)
+
+Nouvelle rubrique **Paramètres → Protection**. Chaque réglage demande le mot
+de passe administrateur (root) ; **tout est désactivé par défaut**.
+
+- **Blocage après plusieurs erreurs** : une fois activé, 5 mots de passe ratés
+  bloquent le compte 5 minutes (écran de connexion, écran verrouillé, et
+  mot de passe administrateur demandé par Paramètres ou le Magasin). Réglages
+  dans `/usr/local/etc/nexus/securite.conf` (`BLOCAGE`, `ESSAIS`, `DUREE`) ;
+  désactiver le blocage débloque tous les comptes. Code commun :
+  `desktop/common/nexus-secu.h`. (`su` dans un terminal n'est pas concerné :
+  il garde sa pause de BusyBox après une erreur.)
+- **Chiffrement du disque** (LUKS2, AES-XTS 512 bits, argon2id) :
+  « Chiffrer le disque… » enregistre la phrase secrète (8 caractères minimum),
+  et le disque est chiffré **sur place au démarrage suivant**, avant d'être
+  utilisé (`/usr/sbin/nexus-disque`, appelé par rcS) : le système de fichiers
+  est rétréci de 32 Mo pour l'en-tête, puis chaque bloc est réécrit chiffré
+  (environ 15 s par Go dans la VM). Ensuite, la phrase est demandée **à chaque
+  démarrage**, sur l'écran et sur la console série (5 essais ; sinon,
+  démarrage en mode live). La disposition du clavier est gardée dans
+  l'en-tête du disque, pour taper la phrase en AZERTY. « Changer la phrase
+  secrète… » la remplace. Si le chiffrement est interrompu (coupure de
+  courant), il est réparé et terminé au démarrage suivant, après la phrase.
+  **Sans la phrase, les fichiers sont perdus**, et le chiffrement ne peut pas
+  être retiré. Outils ajoutés à l'image : `cryptsetup` 2.7.5, `e2fsck` et
+  `resize2fs` 1.47.1 (statiques, compilés avec la pile graphique) ; noyau
+  avec `dm-crypt`.
+- **Journal de sécurité** (`/usr/local/var/log/securite.log`, lisible par root
+  seulement) : connexions, mots de passe ratés, blocages, paquets installés
+  ou supprimés (`npk`), réglages du pare-feu, comptes créés ou supprimés,
+  chiffrement. Bouton « Afficher le journal… » (les erreurs en rouge).
+- Le fuseau horaire (heure de Paris) est maintenant défini pour tout le
+  système (rcS, `/etc/profile`).
+
+Testé dans une VM vierge : blocage après 5 erreurs (écran de connexion
+compris) et journal ; chiffrement demandé dans Paramètres puis fait au
+redémarrage, fichiers intacts ; phrase fausse refusée sur la console série,
+bonne phrase tapée à l'écran en AZERTY ; changement de phrase (ancienne
+phrase fausse refusée) ; chiffrement interrompu volontairement puis repris
+automatiquement. Un premier essai sur un disque de 2 Go s'est figé à 85 %
+sans pouvoir être reproduit ensuite (le disque reste récupérable : voir la
+reprise automatique).

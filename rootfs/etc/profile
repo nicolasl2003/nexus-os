@@ -18,3 +18,6 @@ if [ "$(tty)" = /dev/tty1 ] && [ -z "$WAYLAND_DISPLAY" ] && [ -z "$NEXUS_SESSION
     echo "Ouverture du bureau Nexus... (Ctrl+Alt+F2 : console texte)"
     nexus-desktop
 fi
+
+# Fuseau horaire (heure de Paris, été/hiver)
+export TZ="${TZ:-CET-1CEST,M3.5.0,M10.5.0/3}"
