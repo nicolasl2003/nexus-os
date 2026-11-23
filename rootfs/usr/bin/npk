@@ -66,6 +66,19 @@ download() {
     fi
 }
 
+# Premier contact avec un dépôt : une seule tentative courte et silencieuse.
+# Un dépôt absent (ex. 10.0.2.2:8080 quand rien n'est servi : sous VirtualBox
+# la connexion reste sans réponse) ne coûte ainsi que 2 s au lieu de 12 s.
+probe() {
+    case "$1" in file://*) download "$1" "$2"; return ;; esac
+    if [ -x "$NPK_ROOT/bin/curl" ]; then
+        "$NPK_ROOT/bin/curl" -fsL --connect-timeout 2 -o "$2" "$1" 2>/dev/null
+    else
+        rm -f "$2"
+        wget -q -T 3 -O "$2" "$1" 2>/dev/null
+    fi
+}
+
 # Les commandes qui modifient le système demandent les droits root
 need_root() {
     if [ "$(id -u)" != 0 ]; then
@@ -198,7 +211,11 @@ verify_index() {
 try_repo() {
     _url="$1"
     rm -f "$INDEX.new" "$INDEX.minisig.new"
-    download "$_url/INDEX" "$INDEX.new" && [ -s "$INDEX.new" ] || { rm -f "$INDEX.new"; return 1; }
+    if ! ${FETCH_INDEX:-probe} "$_url/INDEX" "$INDEX.new" || [ ! -s "$INDEX.new" ]; then
+        rm -f "$INDEX.new"
+        say "$_url : injoignable, dépôt suivant"
+        return 1
+    fi
 
     if ! download "$_url/INDEX.minisig" "$INDEX.minisig.new"; then
         rm -f "$INDEX.minisig.new"
@@ -251,6 +268,18 @@ cmd_update() {
             2) _refused=yes ;;
         esac
     done
+    # Aucun dépôt n'a répondu au premier contact : connexion lente ? On
+    # réessaie avec les délais normaux (4 s, 2 nouvelles tentatives).
+    if [ "$_refused" = no ]; then
+        FETCH_INDEX=download
+        for _u in $REPO_URLS; do
+            try_repo "$_u"
+            case $? in
+                0) return 0 ;;
+                2) _refused=yes ;;
+            esac
+        done
+    fi
     if [ "$_refused" = yes ]; then
         die "aucun dépôt utilisable : ceux qui répondent ont été refusés (voir ci-dessus). Ton index actuel est conservé."
     fi

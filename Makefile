@@ -10,7 +10,7 @@ GUI_IMAGE := nexus-os-gui-builder
 DOCKER_GUI_BUILD := docker run --rm -e FORCE -v "$(CURDIR)":/work -v $(VOLUME):/work/build $(GUI_IMAGE)
 DOCKER_BATCH := docker run --rm -e DATA_DISK_SIZE -e FORCE -v "$(CURDIR)":/work -v $(VOLUME):/work/build $(IMAGE)
 
-.PHONY: publish all image kernel busybox tools keys rootfs iso packages dist disk disk-reset run run-gui run-native run-native-web run-iso run-iso-gui run-uefi novnc gui-image gui-stack desktop-apps shell clean
+.PHONY: publish all image kernel busybox tools keys rootfs iso packages dist disk disk-reset run run-gui run-native run-native-web run-iso run-iso-gui run-uefi novnc gui-image gui-stack desktop-apps vbox vbox-repo shell clean
 
 all: kernel busybox tools keys packages rootfs iso dist
 
@@ -91,6 +91,14 @@ run-iso: disk
 
 run-uefi: disk
 	$(DOCKER) ./scripts/run-iso.sh uefi
+
+# VirtualBox (sur l'hôte) : crée la VM « Nexus OS » qui démarre sur l'ISO de dist/
+vbox: disk
+	./scripts/create-vbox-vm.sh
+
+# Sert le dépôt npk à la VM VirtualBox (10.0.2.2:8080 en NAT), pendant qu'elle tourne
+vbox-repo:
+	python3 -m http.server 8080 --bind 127.0.0.1 --directory dist/repo
 
 shell: image
 	$(DOCKER) bash

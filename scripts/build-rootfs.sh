@@ -23,6 +23,8 @@ sed -i "s/@VERSION@/$NEXUS_VERSION/g" etc/os-release etc/motd
 install -m 755 "$MINISIGN" usr/bin/minisign
 mkdir -p etc/npk/keys
 install -m 644 "$NPK_PUB" etc/npk/keys/nexus-npk.pub
+# Clé locale (machine sans la clé secrète officielle, voir make-keys.sh)
+[ -f "$ROOT_DIR/keys/local-npk.pub" ] && install -m 644 "$ROOT_DIR/keys/local-npk.pub" etc/npk/keys/local-npk.pub
 
 # Disque chiffré (nexus-disque, au démarrage, avant que /data soit monté) :
 # cryptsetup, e2fsck et resize2fs statiques, compilés avec la pile graphique

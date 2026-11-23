@@ -2,6 +2,7 @@ build/
 dist/
 disk/
 keys/*.key
+keys/local-npk.pub
 tools/
 .DS_Store
 *.img

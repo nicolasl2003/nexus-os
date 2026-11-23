@@ -11,9 +11,15 @@ if [ -f "$KEYS_DIR/nexus-npk.key" ]; then
 fi
 
 mkdir -p "$KEYS_DIR"
+# keys/nexus-npk.pub (dans git) est la clé officielle, qui signe le dépôt en
+# ligne : on ne l'écrase pas. Sur une machine sans la clé secrète officielle,
+# on génère une clé locale (keys/local-npk.pub, hors de git), intégrée à côté
+# de l'officielle : le dépôt local ET le dépôt en ligne restent acceptés.
+PUB="$KEYS_DIR/nexus-npk.pub"
+[ -f "$PUB" ] && PUB="$KEYS_DIR/local-npk.pub"
 log "Génération de la paire de clés de signature (Ed25519)"
 # -W : clé secrète sans mot de passe, pour pouvoir signer automatiquement au build
-"$MINISIGN" -G -W -p "$KEYS_DIR/nexus-npk.pub" -s "$KEYS_DIR/nexus-npk.key" >/dev/null
+"$MINISIGN" -G -W -f -p "$PUB" -s "$KEYS_DIR/nexus-npk.key" >/dev/null
 chmod 600 "$KEYS_DIR/nexus-npk.key"
-log "Clé publique : keys/nexus-npk.pub ($(sed -n 2p "$KEYS_DIR/nexus-npk.pub"))"
+log "Clé publique : keys/$(basename "$PUB") ($(sed -n 2p "$PUB"))"
 log "Clé SECRÈTE  : keys/nexus-npk.key — garde-la précieusement et hors de git"
