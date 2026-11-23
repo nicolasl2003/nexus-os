@@ -105,3 +105,9 @@ CONFIG_CRYPTO_SHA512=y
 # interface crypto du noyau utilisée par cryptsetup (zones de clés LUKS)
 CONFIG_CRYPTO_USER_API_HASH=y
 CONFIG_CRYPTO_USER_API_SKCIPHER=y
+
+# ---- Matériel branché à chaud (Nexus 0.15.1) ----
+# Le noyau appelle /usr/sbin/nexus-hotplug (réglé par rcS dans
+# /proc/sys/kernel/hotplug) à chaque branchement : pilote chargé à la volée
+CONFIG_UEVENT_HELPER=y
+CONFIG_UEVENT_HELPER_PATH=""

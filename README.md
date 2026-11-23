@@ -820,3 +820,12 @@ phrase fausse refusée) ; chiffrement interrompu volontairement puis repris
 automatiquement. Un premier essai sur un disque de 2 Go s'est figé à 85 %
 sans pouvoir être reproduit ensuite (le disque reste récupérable : voir la
 reprise automatique).
+
+### Nexus 0.15.1 : matériel branché à chaud
+
+Le noyau n'avait pas l'option `CONFIG_UEVENT_HELPER` : `/proc/sys/kernel/hotplug`
+n'existait pas et `/usr/sbin/nexus-hotplug` n'était jamais appelé, donc le
+pilote d'une clé Wi-Fi ou d'une carte son USB branchée **après** le démarrage
+n'était pas chargé. Corrigé (noyau recompilé, `linux-wifi` 6.12.10-r5).
+Testé : branchement d'une clé USB dans la VM (le script est appelé), et
+pilote `ath9k_htc` chargé pour l'identifiant d'une clé Wi-Fi Atheros.
