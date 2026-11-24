@@ -26,6 +26,9 @@ int monitor_main(int argc, char **argv);
 int screenshot_main(int argc, char **argv);
 int lock_main(int argc, char **argv);
 int display_main(int argc, char **argv);
+int pin_main(int argc, char **argv);
+int popup_main(int argc, char **argv);
+int tray_main(int argc, char **argv);
 
 static const struct { const char *name; int (*fn)(int, char **); } progs[] = {
     { "panel", panel_main }, { "menu", menu_main },
@@ -35,7 +38,7 @@ static const struct { const char *name; int (*fn)(int, char **); } progs[] = {
     { "store", store_main }, { "notifyd", notifyd_main }, { "notify", notify_send_main },
     { "assistant", assistant_main }, { "editor", editor_main }, { "calculator", calc_main },
     { "monitor", monitor_main }, { "screenshot", screenshot_main }, { "lock", lock_main },
-    { "display", display_main },
+    { "display", display_main }, { "pin", pin_main }, { "popup", popup_main }, { "tray", tray_main },
 };
 
 int main(int argc, char **argv)

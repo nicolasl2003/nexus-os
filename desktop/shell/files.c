@@ -475,13 +475,28 @@ static void clip_set(bool cut)
         clip[nclip++] = strdup(p);
     }
     clip_cut = cut;
+    nx_fileclip_set(cut, clip, nclip);   /* aussi pour le bureau */
     set_status("%d élément(s) %s : utilise Coller dans le dossier de destination",
                nclip, cut ? "coupé(s)" : "copié(s)");
     nx_redraw(win);
 }
 
+/* Reprend le presse-papiers partagé (copié sur le bureau ou dans une autre fenêtre) */
+static void clip_sync(void)
+{
+    char **paths;
+    bool cut = false;
+    int n = nx_fileclip_get(&cut, &paths);
+    for (int i = 0; i < nclip; i++) free(clip[i]);
+    free(clip);
+    clip = paths;
+    nclip = n;
+    clip_cut = cut;
+}
+
 static void do_paste(void)
 {
+    clip_sync();
     int ok = 0, fail = 0;
     for (int i = 0; i < nclip; i++) {
         const char *base = strrchr(clip[i], '/') ? strrchr(clip[i], '/') + 1 : clip[i];
@@ -496,7 +511,7 @@ static void do_paste(void)
         int rc = clip_cut ? move_path(clip[i], dst) : copy_path(clip[i], dst);
         if (rc == 0) ok++; else fail++;
     }
-    if (clip_cut && fail == 0) { for (int i = 0; i < nclip; i++) free(clip[i]); nclip = 0; }
+    if (clip_cut && fail == 0) { for (int i = 0; i < nclip; i++) free(clip[i]); nclip = 0; nx_fileclip_clear(); }
     if (fail) set_status("%d élément(s) collé(s), %d échec(s)", ok, fail);
     else set_status("%d élément(s) collé(s)", ok);
     refresh();
@@ -529,7 +544,7 @@ static void open_entry(int i)
 
 enum action {
     A_NONE, A_OPEN, A_CUT, A_COPY, A_PASTE, A_RENAME, A_TRASH, A_RESTORE, A_DELETE,
-    A_NEWDIR, A_HIDDEN, A_REFRESH, A_EMPTY, A_SHORTCUT,
+    A_NEWDIR, A_HIDDEN, A_REFRESH, A_EMPTY, A_SHORTCUT, A_WALLPAPER,
 };
 struct menu_item { const char *label; enum action act; };
 static struct menu_item menu[10];
@@ -549,6 +564,7 @@ static void add_menu(const char *label, enum action a)
 
 static void open_menu(double x, double y, bool on_item)
 {
+    clip_sync();
     nmenu = 0;
     if (on_item) {
         if (in_trash()) {
@@ -559,6 +575,8 @@ static void open_menu(double x, double y, bool on_item)
             add_menu("Couper", A_CUT);
             add_menu("Copier", A_COPY);
             if (selected_count() == 1) add_menu("Renommer", A_RENAME);
+            if (selected_count() == 1 && first_selected() >= 0 && is_image(ents[first_selected()].name))
+                add_menu("Définir comme fond d'écran", A_WALLPAPER);
             if (selected_count() == 1 && first_selected() >= 0 && ents[first_selected()].dir)
                 add_menu("Ajouter aux raccourcis", A_SHORTCUT);
             add_menu("Mettre à la corbeille", A_TRASH);
@@ -637,6 +655,19 @@ static void run_action(enum action a)
     case A_HIDDEN: show_hidden = !show_hidden; refresh(); break;
     case A_REFRESH: refresh(); break;
     case A_EMPTY: start_dialog(DLG_EMPTY); break;
+    case A_WALLPAPER: {
+        int i = first_selected();
+        if (i < 0) break;
+        char p[PATH_MAX];
+        sel_path(i, p, sizeof p);
+        if (strlen(p) >= sizeof nx_conf.wallpaper) { set_status("Chemin trop long pour un fond d'écran"); break; }
+        nx_config_load(&nx_conf);
+        snprintf(nx_conf.wallpaper, sizeof nx_conf.wallpaper, "%s", p);
+        if (nx_config_save(&nx_conf) != 0) { set_status("Impossible d'enregistrer le fond d'écran"); break; }
+        nx_notify_reload();   /* le bureau se redessine */
+        set_status("« %s » est maintenant le fond d'écran", ents[i].name);
+        break;
+    }
     case A_SHORTCUT: {
         /* widget « Raccourcis » du bureau : 4 dossiers au plus */
         int i = first_selected();
@@ -1330,8 +1361,8 @@ static void init_paths(void)
     snprintf(trash_files, sizeof trash_files, "%s/files", base); mkdir(trash_files, 0700);
     snprintf(trash_info, sizeof trash_info, "%s/info", base); mkdir(trash_info, 0700);
     /* Dossiers habituels, créés une fois s'ils n'existent pas */
-    static const char *std[] = { "Documents", "Images", "Téléchargements" };
-    for (unsigned i = 0; i < 3; i++) {
+    static const char *std[] = { "Documents", "Images", "Téléchargements", "Bureau" };
+    for (unsigned i = 0; i < 4; i++) {
         snprintf(tmp, sizeof tmp, "%s/%s", home, std[i]);
         mkdir(tmp, 0755);
     }
@@ -1506,11 +1537,36 @@ int files_main(int argc, char **argv)
 {
     if (argc > 2 && !strcmp(argv[1], "--view")) return viewer_main(argv[2]);
     init_paths();
+    /* Utilisés par le bureau : ouvrir un élément, coller dans un dossier */
+    const char *start = argc > 1 ? argv[1] : home;
+    static char dir[PATH_MAX];
+    if (argc > 2 && !strcmp(argv[1], "--open")) {
+        struct stat st;
+        const char *p = argv[2];
+        if (stat(p, &st) != 0) return 1;
+        start = p;
+        if (!S_ISDIR(st.st_mode)) {
+            const char *base = strrchr(p, '/') ? strrchr(p, '/') + 1 : p;
+            nx_recent_add(p);
+            if (is_image(base)) return viewer_main(p);
+            if (looks_text(p)) { execlp("nexus-editor", "nexus-editor", p, (char *)NULL); return 1; }
+            /* autre type : ouvrir le dossier qui le contient */
+            snprintf(dir, sizeof dir, "%s", p);
+            char *sl = strrchr(dir, '/');
+            if (sl && sl != dir) *sl = 0;
+            start = dir;
+        }
+    } else if (argc > 2 && !strcmp(argv[1], "--paste")) {
+        if (!realpath(argv[2], cwd)) return 1;
+        do_paste();
+        if (status_msg[0]) printf("%s\n", status_msg);
+        return 0;
+    }
     if (!nx_init()) return 1;
     struct nx_handlers h = { .draw = draw, .pointer = pointer, .key = key };
     win = nx_toplevel_window(h, "Fichiers", "nexus-files", WIN_W, WIN_H);
     if (!win) return 1;
-    navigate(argc > 1 ? argv[1] : home, true);
+    navigate(start, true);
     nx.timeout = status_timeout;
     nx.tick = status_tick;
     nx.reload = reload;

@@ -856,3 +856,36 @@ Testé dans une VM en 2000 x 1250 : assistant, écran de connexion et bureau en
 ×1,5 (texte net), changement de taille en direct dans Paramètres, Firefox
 avec la barre de titre Nexus, `htop` installé par root lancé par un compte
 ordinaire.
+
+## Nexus 0.17 : clics droits, Bureau, logiciels ouverts
+
+- **Barre des tâches, clic droit** sur une application :
+  « Ouvrir / Nouvelle fenêtre », « Détacher de la barre des tâches »,
+  « Épingler à la barre des tâches » (fenêtre non épinglée), « Fermer la
+  fenêtre ». La liste est propre à chaque compte
+  (`~/.config/nexus/epingles`, une ligne `app_id|nom|commande`) ; un
+  logiciel externe s'épingle grâce à son fichier `.desktop`. Outils :
+  `nexus-pin add|remove|close`, `nexus-popup` (petit menu au-dessus de la barre).
+- **Vrais logos** des logiciels externes (Firefox…) dans la barre, lus dans
+  le thème d'icônes (`hicolor`, `pixmaps`) via leur `.desktop`.
+- **Flèche « ^ »** (`nexus-tray`) : panneau « Logiciels ouverts » avec le logo
+  des logiciels externes à Nexus OS en cours d'exécution (clic : afficher la
+  fenêtre ; clic droit : épingler ou fermer), et un lien Paramètres.
+- **Bureau** : affiche aussi le contenu du dossier `~/Bureau` (créé
+  automatiquement, relu toutes les 3 s). Clic droit sur un élément : Ouvrir,
+  Copier, Couper, Propriétés (taille, contenu, date ; pour « Ce PC » :
+  système, disque, mémoire, processeurs). Clic droit sur le fond : Coller,
+  Nouveau dossier, Actualiser, Personnaliser, Propriétés de l'affichage.
+  Le presse-papiers de fichiers est partagé avec Fichiers
+  (`$XDG_RUNTIME_DIR/nexus-fichiers.clip`) : copier sur le bureau et coller
+  dans Fichiers, ou l'inverse.
+- **Fichiers** : clic droit sur une image → « Définir comme fond d'écran ».
+  Nouveaux modes `nexus-files --open <chemin>` et `--paste <dossier>`.
+- Les programmes qui suivent les fenêtres posent leur écoute dès la
+  connexion (`nx.toplevel_listener`) : les fenêtres déjà ouvertes ne sont
+  plus manquées.
+
+Testé dans une VM en 2000 x 1250 : copier/coller sur le bureau, Propriétés
+d'un dossier et de « Ce PC », image du Bureau mise en fond d'écran depuis
+Fichiers, Fichiers détaché puis ré-épinglé, Firefox visible dans « ^ » avec
+son logo, épinglé depuis ce panneau puis fermé par le clic droit de la barre.

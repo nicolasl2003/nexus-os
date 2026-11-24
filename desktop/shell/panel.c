@@ -13,6 +13,7 @@
  */
 #define _GNU_SOURCE
 #include "nexus-ui.h"
+#include "pins.h"
 #include "audio.h"
 #include "network.h"
 
@@ -49,15 +50,8 @@ struct task {
 static struct task *tasks;
 static struct nx_window *panel;
 
-/* Applications épinglées */
-struct pin { const char *label, *icon, *app_id, *cmd, *needs; };
-static const struct pin all_pins[] = {
-    { "Fichiers", "files", "nexus-files", "nexus-files", NULL },
-    { "Navigateur", "browser", "nexus-browser", "nexus-browser", "/usr/local/bin/netsurf-fb" },
-    { "Paramètres", "settings", "nexus-settings", "nexus-settings", NULL },
-    { "Magasin d'applications", "store", "nexus-store", "nexus-store", NULL },
-};
-static const struct pin *pins[8];
+/* Applications épinglées (liste du compte, modifiable par clic droit) */
+static struct nx_pin pins[NX_MAX_PINS];
 static int npins;
 
 /* Boutons de la barre, recalculés à chaque dessin */
@@ -118,16 +112,17 @@ static const struct zwlr_foreign_toplevel_manager_v1_listener manager_listener =
     .toplevel = m_toplevel, .finished = m_finished,
 };
 
-static const struct pin *pin_of(const struct task *t)
+static const struct nx_pin *pin_of(const struct task *t)
 {
     for (int i = 0; i < npins; i++)
-        if (!strcmp(t->app_id, pins[i]->app_id) || (!strcmp(pins[i]->app_id, "foot") && !strcmp(t->app_id, "footclient")))
-            return pins[i];
+        if (!strcmp(t->app_id, pins[i].app_id) || (!strcmp(pins[i].app_id, "foot") && !strcmp(t->app_id, "footclient")))
+            return &pins[i];
     return NULL;
 }
 
 static const char *task_icon(const struct task *t)
 {
+    if (nx_external_icon(t->app_id)) return t->app_id;   /* vrai logo (Firefox...) */
     const char *id = nx_app_icon_for(t->app_id);
     if (strcmp(id, t->app_id)) return id;          /* application connue */
     return t->title[0] ? t->title : t->app_id;     /* sinon : initiale du titre */
@@ -144,7 +139,7 @@ static void toggle_task(struct task *t)
     }
 }
 
-static void click_pin(const struct pin *p)
+static void click_pin(const struct nx_pin *p)
 {
     struct task *first = NULL, *active = NULL;
     for (struct task *t = tasks; t; t = t->next) {
@@ -316,9 +311,9 @@ static void draw(struct nx_window *w, cairo_t *cr, int width, int height)
         int count = 0;
         bool active = false;
         for (struct task *t = tasks; t; t = t->next)
-            if (t->ready && pin_of(t) == pins[i]) { count++; active |= t->activated && !t->minimized; }
+            if (t->ready && pin_of(t) == &pins[i]) { count++; active |= t->activated && !t->minimized; }
         button_bg(cr, x, cell, by, bh, nbtns);
-        nx_app_icon(cr, pins[i]->icon, x + (cell - isz) / 2, iy, isz, white);
+        nx_app_icon(cr, pins[i].app_id, x + (cell - isz) / 2, iy, isz, white);
         indicator(cr, x + cell / 2, dy + dh - 6, count, active);
         add_btn(B_PIN, i, x, cell);
         x += cell;
@@ -436,6 +431,52 @@ static struct task *task_at(int index)
     return NULL;
 }
 
+/* Clic droit sur une application : petit menu au-dessus de la barre */
+static void context_menu(const struct btn *b)
+{
+    char cmd[4096], q[700], q2[700], arg[1600];
+    const char *app = NULL, *title = "";
+    bool pinned = false, open = false;
+    if (b->kind == B_PIN) {
+        const struct nx_pin *p = &pins[b->index];
+        app = p->app_id;
+        pinned = true;
+        for (struct task *t = tasks; t; t = t->next)
+            if (t->ready && pin_of(t) == p) { open = true; title = t->title; }
+    } else {
+        struct task *t = task_at(b->index);
+        if (!t) return;
+        app = t->app_id;
+        title = t->title;
+        open = true;
+    }
+    snprintf(cmd, sizeof cmd, "nexus-popup %d", (int)(b->x + b->w / 2));
+#define ITEM(label, c) do { nx_shell_quote(q, sizeof q, label); nx_shell_quote(q2, sizeof q2, c); \
+        size_t l = strlen(cmd); snprintf(cmd + l, sizeof cmd - l, " %s %s", q, q2); } while (0)
+    if (pinned) {
+        ITEM(open ? "Nouvelle fenêtre" : "Ouvrir", pins[b->index].cmd);
+        nx_shell_quote(q, sizeof q, app);
+        snprintf(arg, sizeof arg, "nexus-pin remove %s", q);
+        ITEM("Détacher de la barre des tâches", arg);
+    } else {
+        struct nx_pin info;
+        if (nx_pin_info(app, &info)) {
+            nx_shell_quote(q, sizeof q, app);
+            snprintf(arg, sizeof arg, "nexus-pin add %s", q);
+            ITEM("Épingler à la barre des tâches", arg);
+        }
+    }
+    if (open) {
+        char qa[300], qt[600];
+        nx_shell_quote(qa, sizeof qa, app);
+        nx_shell_quote(qt, sizeof qt, title);
+        snprintf(arg, sizeof arg, "nexus-pin close %s %s", qa, qt);
+        ITEM("Fermer la fenêtre", arg);
+    }
+#undef ITEM
+    nx_spawn(cmd);
+}
+
 static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, double y, int value)
 {
     int h = hit(x);
@@ -474,14 +515,21 @@ static void pointer(struct nx_window *w, enum nx_pointer_event ev, double x, dou
                 switch (b->kind) {
                 case B_START: nx_spawn("nexus-menu"); break;
                 case B_SEARCH: nx_spawn("nexus-menu --search"); break;
-                case B_PIN: click_pin(pins[b->index]); break;
+                case B_PIN: click_pin(&pins[b->index]); break;
                 case B_TASK: { struct task *t = task_at(b->index); if (t) toggle_task(t); break; }
                 case B_NET: nx_spawn("nexus-network"); break;
                 case B_VOL: nx_spawn("nexus-volume"); break;
                 case B_CLOCK: nx_spawn("nexus-settings --about"); break;
-                case B_MORE: nx_spawn("nexus-settings"); break;
+                case B_MORE: {
+                    char cmd[64];
+                    snprintf(cmd, sizeof cmd, "nexus-tray %d", (int)(b->x + b->w / 2));
+                    nx_spawn(cmd);
+                    break;
+                }
                 case B_BAT: nx_spawn("nexus-monitor"); break;
                 }
+            } else if (value == BTN_RIGHT && (b->kind == B_PIN || b->kind == B_TASK)) {
+                context_menu(b);
             } else if (value == BTN_MIDDLE && b->kind == B_TASK) {
                 struct task *t = task_at(b->index);
                 if (t) zwlr_foreign_toplevel_handle_v1_close(t->handle);
@@ -508,9 +556,7 @@ static void tick(void) { nx_redraw(panel); }
 /* Applications épinglées présentes (le navigateur peut être installé ensuite) */
 static void load_pins(void)
 {
-    npins = 0;
-    for (unsigned i = 0; i < sizeof all_pins / sizeof all_pins[0] && npins < 8; i++)
-        if (!all_pins[i].needs || access(all_pins[i].needs, X_OK) == 0) pins[npins++] = &all_pins[i];
+    npins = nx_pins_load(pins, NX_MAX_PINS);
 }
 
 /* Réglages modifiés (SIGUSR1) : hauteur de barre, applications installées */
@@ -525,6 +571,7 @@ int panel_main(int argc, char **argv)
 {
     (void)argc; (void)argv;
     load_pins();
+    nx.toplevel_listener = &manager_listener;   /* fenêtres déjà ouvertes comprises */
     if (!nx_init()) return 1;
     cur_h = nx_panel_height();
     struct nx_handlers h = { .draw = draw, .pointer = pointer };
@@ -534,7 +581,6 @@ int panel_main(int argc, char **argv)
                             0, PANEL_H + LIFT, PANEL_H,
                             ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE, "nexus-panel");
     if (!panel) return 1;
-    if (nx.toplevels) zwlr_foreign_toplevel_manager_v1_add_listener(nx.toplevels, &manager_listener, NULL);
     nx.timeout = until_next_minute;
     nx.tick = tick;
     nx.reload = reload;

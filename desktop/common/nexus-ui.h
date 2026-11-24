@@ -191,6 +191,9 @@ struct nx_state {
     struct wl_data_device *data_device;
     struct ext_session_lock_manager_v1 *lock_manager;
     struct ext_idle_notifier_v1 *idle_notifier;
+    /* À remplir AVANT nx_init() pour suivre les fenêtres : posé dès la liaison,
+     * sinon les fenêtres déjà ouvertes (annoncées tout de suite) sont perdues */
+    const struct zwlr_foreign_toplevel_manager_v1_listener *toplevel_listener;
     struct wp_viewporter *viewporter;
     struct wp_fractional_scale_manager_v1 *frac_manager;
     struct wl_output *outputs[8];
@@ -254,6 +257,24 @@ bool nx_match(const char *haystack, const char *needle);
 void nx_spawn(const char *cmd);
 /* Signale aux programmes du bureau que la configuration a changé */
 void nx_notify_reload(void);
+
+/* Logiciels externes (Alpine...) : fichier .desktop correspondant à un app_id
+ * (nom du fichier ou StartupWMClass). Remplit le nom affiché, la commande
+ * (sans %u, %F...) et le nom d'icône ; renvoie false si rien n'est trouvé. */
+bool nx_desktop_entry(const char *app_id, char *name, size_t nn, char *exec, size_t ne,
+                      char *icon, size_t ni);
+/* Vrai logo PNG d'un logiciel externe (thème d'icônes, pixmaps), ou NULL.
+ * Gardé en cache : ne pas détruire. */
+cairo_surface_t *nx_external_icon(const char *app_id);
+/* Logiciel fourni par Nexus OS (nexus-*, terminal foot) ? */
+bool nx_is_nexus_app(const char *app_id);
+
+/* Presse-papiers de fichiers partagé (bureau <-> Fichiers) :
+ * $XDG_RUNTIME_DIR/nexus-fichiers.clip, 1re ligne "copy" ou "cut". */
+void nx_fileclip_set(bool cut, char *const *paths, int n);
+int nx_fileclip_get(bool *cut, char ***paths);   /* à libérer avec nx_fileclip_free */
+void nx_fileclip_free(char **paths, int n);
+void nx_fileclip_clear(void);
 
 int nx_bench(void);
 int nx_render(int argc, char **argv);   /* nexus-shell render */   /* nexus-shell bench */

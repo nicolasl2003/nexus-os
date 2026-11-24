@@ -718,8 +718,186 @@ static void tile_path(cairo_t *cr)
     }
 }
 
+bool nx_is_nexus_app(const char *app_id)
+{
+    if (!app_id || !app_id[0]) return true;
+    return !strncmp(app_id, "nexus-", 6) || !strcmp(app_id, "foot") || !strcmp(app_id, "footclient");
+}
+
+static const char *const app_dirs[] = {
+    "/usr/share/applications", "/usr/local/share/applications", "/usr/local/alpine/usr/share/applications",
+};
+
+static bool desktop_read(const char *path, const char *app_id, bool by_class,
+                         char *name, size_t nn, char *exec, size_t ne, char *icon, size_t ni)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return false;
+    char line[1024], n[256] = "", e[1024] = "", ic[256] = "", wm[256] = "";
+    bool in_main = false, nodisplay = false;
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (line[0] == '[') { in_main = !strcmp(line, "[Desktop Entry]"); continue; }
+        if (!in_main) continue;
+        if (!strncmp(line, "Name=", 5) && !n[0]) snprintf(n, sizeof n, "%s", line + 5);
+        else if (!strncmp(line, "Name[fr]=", 9)) snprintf(n, sizeof n, "%s", line + 9);
+        else if (!strncmp(line, "Exec=", 5) && !e[0]) snprintf(e, sizeof e, "%s", line + 5);
+        else if (!strncmp(line, "Icon=", 5)) snprintf(ic, sizeof ic, "%s", line + 5);
+        else if (!strncmp(line, "StartupWMClass=", 15)) snprintf(wm, sizeof wm, "%s", line + 15);
+        else if (!strcmp(line, "NoDisplay=true")) nodisplay = true;
+    }
+    fclose(f);
+    (void)nodisplay;
+    if (by_class && strcasecmp(wm, app_id)) return false;
+    if (!e[0]) return false;
+    /* Exec sans les codes de champ (%u, %F...) */
+    char clean[1024];
+    size_t k = 0;
+    for (const char *p = e; *p && k + 1 < sizeof clean; p++) {
+        if (*p == '%' && p[1]) { p++; continue; }
+        clean[k++] = *p;
+    }
+    while (k && clean[k - 1] == ' ') k--;
+    clean[k] = 0;
+    if (name) snprintf(name, nn, "%s", n[0] ? n : app_id);
+    if (exec) snprintf(exec, ne, "%s", clean);
+    if (icon) snprintf(icon, ni, "%s", ic[0] ? ic : app_id);
+    return true;
+}
+
+bool nx_desktop_entry(const char *app_id, char *name, size_t nn, char *exec, size_t ne,
+                      char *icon, size_t ni)
+{
+    if (!app_id || !app_id[0] || strchr(app_id, '/')) return false;
+    char path[1024];
+    /* 1. fichier du même nom (firefox.desktop, org.gnome.X.desktop...) */
+    for (unsigned d = 0; d < sizeof app_dirs / sizeof app_dirs[0]; d++) {
+        snprintf(path, sizeof path, "%s/%s.desktop", app_dirs[d], app_id);
+        if (desktop_read(path, app_id, false, name, nn, exec, ne, icon, ni)) return true;
+    }
+    /* 2. StartupWMClass identique */
+    for (unsigned d = 0; d < sizeof app_dirs / sizeof app_dirs[0]; d++) {
+        DIR *dir = opendir(app_dirs[d]);
+        if (!dir) continue;
+        struct dirent *de;
+        while ((de = readdir(dir))) {
+            size_t l = strlen(de->d_name);
+            if (l < 9 || strcmp(de->d_name + l - 8, ".desktop")) continue;
+            snprintf(path, sizeof path, "%s/%s", app_dirs[d], de->d_name);
+            if (desktop_read(path, app_id, true, name, nn, exec, ne, icon, ni)) { closedir(dir); return true; }
+        }
+        closedir(dir);
+    }
+    return false;
+}
+
+static cairo_surface_t *icon_file(const char *icon)
+{
+    if (icon[0] == '/') return access(icon, R_OK) == 0 ? nx_load_image(icon, 0) : NULL;
+    static const char *const roots[] = { "/usr/share", "/usr/local/share", "/usr/local/alpine/usr/share" };
+    static const char *const sizes[] = { "64x64", "48x48", "128x128", "96x96", "256x256", "32x32", "512x512" };
+    char p[1024];
+    for (unsigned r = 0; r < 3; r++) {
+        for (unsigned s = 0; s < sizeof sizes / sizeof sizes[0]; s++) {
+            snprintf(p, sizeof p, "%s/icons/hicolor/%s/apps/%s.png", roots[r], sizes[s], icon);
+            if (access(p, R_OK) == 0) { cairo_surface_t *c = nx_load_image(p, 0); if (c) return c; }
+        }
+        snprintf(p, sizeof p, "%s/pixmaps/%s.png", roots[r], icon);
+        if (access(p, R_OK) == 0) { cairo_surface_t *c = nx_load_image(p, 0); if (c) return c; }
+    }
+    return NULL;
+}
+
+cairo_surface_t *nx_external_icon(const char *app_id)
+{
+    static struct { char id[128]; cairo_surface_t *s; } cache[32];
+    static int ncache;
+    if (!app_id || !app_id[0] || nx_is_nexus_app(app_id)) return NULL;
+    for (int i = 0; i < ncache; i++) if (!strcmp(cache[i].id, app_id)) return cache[i].s;
+    char icon[256] = "";
+    cairo_surface_t *s = NULL;
+    if (nx_desktop_entry(app_id, NULL, 0, NULL, 0, icon, sizeof icon)) s = icon_file(icon);
+    if (!s) s = icon_file(app_id);
+    if (!s) {   /* « org.mozilla.firefox » -> « firefox » */
+        const char *dot = strrchr(app_id, '.');
+        if (dot && dot[1]) s = icon_file(dot + 1);
+    }
+    if (ncache < 32) {
+        snprintf(cache[ncache].id, sizeof cache[ncache].id, "%s", app_id);
+        cache[ncache++].s = s;
+    }
+    return s;
+}
+
+/* ---- Presse-papiers de fichiers partagé ---- */
+static void fileclip_path(char *p, size_t n)
+{
+    const char *x = getenv("XDG_RUNTIME_DIR");
+    snprintf(p, n, "%s/nexus-fichiers.clip", x && *x ? x : "/tmp");
+}
+
+void nx_fileclip_set(bool cut, char *const *paths, int n)
+{
+    char p[512], tmp[520];
+    fileclip_path(p, sizeof p);
+    snprintf(tmp, sizeof tmp, "%s.tmp", p);
+    FILE *f = fopen(tmp, "w");
+    if (!f) return;
+    fprintf(f, "%s\n", cut ? "cut" : "copy");
+    for (int i = 0; i < n; i++) fprintf(f, "%s\n", paths[i]);
+    fclose(f);
+    rename(tmp, p);
+}
+
+int nx_fileclip_get(bool *cut, char ***paths)
+{
+    char p[512], line[4200];
+    fileclip_path(p, sizeof p);
+    *paths = NULL;
+    FILE *f = fopen(p, "r");
+    if (!f) return 0;
+    int n = 0, cap = 0;
+    if (!fgets(line, sizeof line, f)) { fclose(f); return 0; }
+    *cut = !strncmp(line, "cut", 3);
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\n")] = 0;
+        if (!line[0]) continue;
+        if (n == cap) { cap = cap ? cap * 2 : 16; *paths = realloc(*paths, cap * sizeof **paths); }
+        (*paths)[n++] = strdup(line);
+    }
+    fclose(f);
+    return n;
+}
+
+void nx_fileclip_free(char **paths, int n)
+{
+    for (int i = 0; i < n; i++) free(paths[i]);
+    free(paths);
+}
+
+void nx_fileclip_clear(void)
+{
+    char p[512];
+    fileclip_path(p, sizeof p);
+    unlink(p);
+}
+
 void nx_app_icon(cairo_t *cr, const char *app, double x, double y, double s, nx_color fg)
 {
+    /* Logiciel externe : son vrai logo s'il en a un (sauf icônes monochromes) */
+    cairo_surface_t *ext = nx_conf.icon_style == 1 ? NULL : nx_external_icon(app);
+    if (ext) {
+        double iw = cairo_image_surface_get_width(ext), ih = cairo_image_surface_get_height(ext);
+        double k = s / fmax(iw, ih);
+        cairo_save(cr);
+        cairo_translate(cr, x + (s - iw * k) / 2, y + (s - ih * k) / 2);
+        cairo_scale(cr, k, k);
+        cairo_set_source_surface(cr, ext, 0, 0);
+        cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
+        cairo_paint(cr);
+        cairo_restore(cr);
+        return;
+    }
     const char *id = nx_app_icon_for(app);
     const struct app_logo *logo = find_logo(id);
     bool mono = nx_conf.icon_style == 1;
@@ -1462,7 +1640,11 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
     } else if (!strcmp(iface, zxdg_decoration_manager_v1_interface.name))
         nx.decorations = wl_registry_bind(r, name, &zxdg_decoration_manager_v1_interface, 1);
     else if (!strcmp(iface, zwlr_foreign_toplevel_manager_v1_interface.name))
+    {
         nx.toplevels = wl_registry_bind(r, name, &zwlr_foreign_toplevel_manager_v1_interface, NX_MIN(ver, 3));
+        if (nx.toplevel_listener)
+            zwlr_foreign_toplevel_manager_v1_add_listener(nx.toplevels, nx.toplevel_listener, NULL);
+    }
     else if (!strcmp(iface, wl_data_device_manager_interface.name))
         nx.data_manager = wl_registry_bind(r, name, &wl_data_device_manager_interface, NX_MIN(ver, 3));
     else if (!strcmp(iface, ext_session_lock_manager_v1_interface.name))
