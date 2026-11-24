@@ -174,7 +174,9 @@ b_libdrm() {
         -Dvalgrind=disabled -Dtests=false -Dudev=false -Dinstall-test-programs=false
 }
 b_mtdev() {
-    unpack mtdev https://bitmath.org/code/mtdev/mtdev-1.1.7.tar.bz2
+    # Miroir Gentoo : le certificat HTTPS de bitmath.org (site officiel) a expiré.
+    # Archive identique (sha256 a107adad2101fecac54ac7f9f0e0a0dd155d954193da55c2340c97f2ff1d814e)
+    unpack mtdev https://distfiles.gentoo.org/distfiles/e8/mtdev-1.1.7.tar.bz2 mtdev-1.1.7.tar.bz2
     autotools_build mtdev
 }
 b_libevdev() {
