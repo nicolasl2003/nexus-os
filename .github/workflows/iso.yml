@@ -1,0 +1,127 @@
+# Construit l'ISO de Nexus OS à chaque push, sur les serveurs de GitHub.
+# L'ISO est à télécharger dans l'onglet « Actions » → le build → « Artifacts ».
+#
+# Mêmes étapes que sur le Mac (images Docker Dockerfile et Dockerfile.gui),
+# mais build/ est un dossier du dépôt (et non un volume Docker), pour pouvoir
+# garder la pile graphique en cache d'un build à l'autre.
+#
+# Clé de signature (facultatif) : mets le contenu de keys/nexus-npk.key dans
+# le secret NPK_SIGNING_KEY (Settings → Secrets and variables → Actions).
+# Sans ce secret, le build génère une clé locale, comme sur une machine neuve.
+name: ISO
+
+on:
+  push:
+  workflow_dispatch:
+
+# Un nouveau push sur la même branche annule le build en cours
+concurrency:
+  group: iso-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      BUILDER: docker run --rm -v ${{ github.workspace }}:/work nexus-os-builder
+      GUI_BUILDER: docker run --rm -v ${{ github.workspace }}:/work nexus-os-gui-builder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # La machine de GitHub n'a qu'environ 14 Go libres : on retire des
+      # outils préinstallés inutiles ici (Android, .NET, Haskell…)
+      - name: Libérer de la place sur le disque
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null
+          df -h /
+
+      - name: Version de Nexus OS
+        id: version
+        run: |
+          . config/versions.env
+          echo "nexus=$NEXUS_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Images Docker de build
+        run: |
+          docker build -t nexus-os-builder .
+          docker build -f Dockerfile.gui -t nexus-os-gui-builder .
+
+      # Pile graphique (Wayland, cryptsetup…) : la partie la plus longue.
+      # Gardée en cache tant que build-gui.sh et Dockerfile.gui ne changent pas ;
+      # les fichiers .done permettent à build-gui.sh de sauter ce qui est fait.
+      - name: Cache de la pile graphique
+        id: gui-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/gui/sysroot
+            build/gui/build/*.done
+          key: gui-${{ hashFiles('scripts/build-gui.sh', 'Dockerfile.gui') }}
+
+      - name: Clé de signature des paquets
+        env:
+          NPK_SIGNING_KEY: ${{ secrets.NPK_SIGNING_KEY }}
+        run: |
+          if [ -n "$NPK_SIGNING_KEY" ]; then
+            printf '%s\n' "$NPK_SIGNING_KEY" > keys/nexus-npk.key
+            chmod 600 keys/nexus-npk.key
+            echo "Clé officielle chargée depuis le secret NPK_SIGNING_KEY"
+          else
+            echo "::notice::Pas de secret NPK_SIGNING_KEY : une clé locale sera générée"
+          fi
+
+      - name: Pile graphique (make gui-stack)
+        run: |
+          $GUI_BUILDER ./scripts/build-gui.sh
+          sudo chown -R "$(id -u):$(id -g)" build/gui
+
+      # Sauvegardé tout de suite : même si une étape suivante échoue, le
+      # prochain build n'aura pas à recompiler la pile graphique
+      - name: Sauvegarde de la pile graphique
+        if: steps.gui-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/gui/sysroot
+            build/gui/build/*.done
+          key: ${{ steps.gui-cache.outputs.cache-primary-key }}
+
+      - name: Programmes du bureau (make desktop-apps)
+        run: $GUI_BUILDER ./scripts/build-desktop.sh
+
+      - name: Noyau (make kernel)
+        run: $BUILDER ./scripts/build-kernel.sh
+
+      - name: BusyBox (make busybox)
+        run: $BUILDER ./scripts/build-busybox.sh
+
+      - name: minisign et clés (make tools keys)
+        run: |
+          $BUILDER ./scripts/build-minisign.sh
+          $BUILDER ./scripts/make-keys.sh
+
+      - name: Paquets npk (make packages)
+        run: $BUILDER ./scripts/build-packages.sh
+
+      - name: Système (make rootfs)
+        run: $BUILDER ./scripts/build-rootfs.sh
+
+      - name: ISO (make iso)
+        run: $BUILDER ./scripts/build-iso.sh
+
+      - name: Envoi de l'ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-os-${{ steps.version.outputs.nexus }}-${{ github.sha }}
+          path: build/out/nexus-os-*.iso
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      # Efface la clé secrète du disque de la machine (Docker l'a écrite en root)
+      - name: Nettoyage
+        if: always()
+        run: sudo rm -f keys/nexus-npk.key
