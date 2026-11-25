@@ -47,6 +47,7 @@ jobs:
         run: |
           . config/versions.env
           echo "nexus=$NEXUS_VERSION" >> "$GITHUB_OUTPUT"
+          echo "kernel=$KERNEL_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Images Docker de build
         run: |
@@ -96,19 +97,78 @@ jobs:
       - name: Programmes du bureau (make desktop-apps)
         run: $GUI_BUILDER ./scripts/build-desktop.sh
 
+      # Noyau : on garde l'arbre des sources AVEC les fichiers compilés (.o).
+      # Si rien n'a changé (même clé), make ne recompile rien. Si
+      # kernel.fragment, le logo ou build-kernel.sh ont changé, on repart du
+      # dernier arbre en cache (restore-keys) : make ne recompile que ce que
+      # les options modifiées touchent, au lieu de tout le noyau.
+      - name: Cache du noyau
+        id: kernel-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/src/linux-${{ steps.version.outputs.kernel }}
+          key: kernel-${{ steps.version.outputs.kernel }}-${{ hashFiles('scripts/build-kernel.sh', 'config/kernel.fragment', 'config/logo/**', 'Dockerfile') }}
+          restore-keys: kernel-${{ steps.version.outputs.kernel }}-
+
       - name: Noyau (make kernel)
-        run: $BUILDER ./scripts/build-kernel.sh
+        run: |
+          $BUILDER ./scripts/build-kernel.sh
+          sudo chown -R "$(id -u):$(id -g)" build
+
+      - name: Sauvegarde du noyau
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/src/linux-${{ steps.version.outputs.kernel }}
+          key: ${{ steps.kernel-cache.outputs.cache-primary-key }}
 
       - name: BusyBox (make busybox)
         run: $BUILDER ./scripts/build-busybox.sh
+
+      # Outils (musl, libsodium, minisign) : ne changent qu'avec leurs versions
+      - name: Cache des outils
+        id: tools-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/tools
+          key: tools-${{ hashFiles('config/versions.env', 'scripts/common.sh', 'scripts/build-minisign.sh', 'Dockerfile') }}
 
       - name: minisign et clés (make tools keys)
         run: |
           $BUILDER ./scripts/build-minisign.sh
           $BUILDER ./scripts/make-keys.sh
+          sudo chown -R "$(id -u):$(id -g)" build
+
+      - name: Sauvegarde des outils
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/tools
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
+
+      # Paquets : build-packages.sh saute ceux dont le .npk existe déjà. Le
+      # cache n'est réutilisé que si RIEN de ce qui entre dans un paquet n'a
+      # changé (recettes, bureau, pile graphique, noyau pour linux-wifi…) :
+      # sinon tous les paquets sont reconstruits, pour ne jamais embarquer
+      # un paquet périmé. L'INDEX est de toute façon régénéré et re-signé.
+      - name: Cache des paquets
+        id: packages-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/repo/*.npk
+          key: packages-${{ hashFiles('packages/**', 'desktop/**', 'scripts/build-packages.sh', 'scripts/build-desktop.sh', 'scripts/build-gui.sh', 'scripts/build-kernel.sh', 'scripts/common.sh', 'config/kernel.fragment', 'config/versions.env', 'Dockerfile', 'Dockerfile.gui') }}
 
       - name: Paquets npk (make packages)
-        run: $BUILDER ./scripts/build-packages.sh
+        run: |
+          $BUILDER ./scripts/build-packages.sh
+          sudo chown -R "$(id -u):$(id -g)" build
+
+      - name: Sauvegarde des paquets
+        if: steps.packages-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/repo/*.npk
+          key: ${{ steps.packages-cache.outputs.cache-primary-key }}
 
       - name: Système (make rootfs)
         run: $BUILDER ./scripts/build-rootfs.sh
